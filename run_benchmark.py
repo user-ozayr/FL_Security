@@ -18,6 +18,7 @@ import pandas as pd
 
 from fl_security.config import load_config
 from fl_security.evaluation.statistics import summarize_values
+from fl_security.evaluation.csv_safety import sanitize_csv_dataframe
 from fl_security.federated.flower_simulation import run_flower_simulation
 from fl_security.smpc.local_demo import run_with_local_aggregators
 
@@ -135,16 +136,16 @@ def run_benchmark(
     output_dir.mkdir(parents=True, exist_ok=True)
     raw = pd.concat(raw_frames, ignore_index=True)
     raw_path = output_dir / "all_rounds.csv"
-    raw.to_csv(raw_path, index=False)
+    sanitize_csv_dataframe(raw).to_csv(raw_path, index=False)
 
     summary = _summarize_by_round(raw, ["condition", "round"])
     summary_path = output_dir / "summary_by_round.csv"
-    summary.to_csv(summary_path, index=False)
+    sanitize_csv_dataframe(summary).to_csv(summary_path, index=False)
 
     metadata_path = output_dir / "condition_metadata.csv"
     pd.DataFrame(metadata_rows).drop_duplicates(
         subset=["condition", "seed"]
-    ).to_csv(metadata_path, index=False)
+    ).pipe(sanitize_csv_dataframe).to_csv(metadata_path, index=False)
 
     paired_path = output_dir / "paired_accuracy_differences.csv"
     paired_rows = []
@@ -177,7 +178,7 @@ def run_benchmark(
                     "metric": metric,
                     **summarize_values(group[metric].tolist()),
                 })
-    pd.DataFrame(paired_rows).to_csv(paired_path, index=False)
+    sanitize_csv_dataframe(pd.DataFrame(paired_rows)).to_csv(paired_path, index=False)
 
     return {
         "raw": raw_path,
