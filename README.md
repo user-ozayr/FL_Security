@@ -84,21 +84,23 @@ provisioning, persistent storage, or audit logging.
 ## MTD randomness
 
 For reproducible thesis runs, leave FL_MTD_SECRET unset: MTD selection and
-committee assignments are then derived from experiment.seed and the round.
-This is deterministic and should not be described as unpredictable to an
-adversary who knows the seed.
+committee assignments are deterministic from the experiment seed and round.
+This mode is intended for repeatable simulation only; a public experiment seed
+does not provide unpredictability against an adversary who knows it.
 
 For a live deployment, set a randomly generated secret in the Flower server
 environment only:
 
     export FL_MTD_SECRET="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
 
-The controller derives its private round schedule from this secret and the
-configured experiment seed. The secret is not sent in Flower client
-configuration or to aggregation parties. Keep it in the server's secret
-manager, rotate it deliberately, and do not publish it with experimental
-configs. Record whether secret-seeded MTD was enabled, but never record the
-secret itself.
+The controller derives a round-scoped HMAC-SHA256 counter stream from this
+secret and the experiment seed. Rejection sampling avoids modulo bias when
+selecting clients and assigning committee positions. The keyed stream is
+unpredictable to parties that do not know FL_MTD_SECRET. The secret is not sent
+in Flower client configuration or to aggregation parties. Keep it in the
+server's secret manager, rotate it deliberately, and do not publish it with
+experimental configs. Record whether secret-seeded MTD was enabled, but never
+record the secret itself.
 
 ## Data flow
 
@@ -113,7 +115,9 @@ secret itself.
    Z_q using OS-backed cryptographic randomness, and POSTs one share directly
    to each party in its assigned committee.
 5. The Flower client returns an empty parameter payload and its local example
-   count. The coordinator verifies that the reported count matches its
+   count. The coordinator binds each FitRes to the registered Flower proxy ID
+   and rejects a missing, duplicate, unregistered, unselected, or mismatched
+   client-reported logical ID. It verifies the reported count against the
    server-known simulation partition and uses the server-known count for
    weighting. No individual update arrays reach the Flower coordinator.
 6. Each aggregation party authenticates client uploads and sums the shares
@@ -131,6 +135,19 @@ secret itself.
 
 In non-SMPC configurations, Flower returns model arrays to the coordinator
 and ordinary sample-weighted FedAvg is used.
+
+## Output-file and CSV safety
+
+Experiment result filenames are restricted to a single file component within
+the configured output directory; path separators, traversal components and
+symbolic-link output targets are rejected. CSV exports neutralize formula-like
+text cells (including values beginning with `=`, `+`, `-` or `@`) so
+spreadsheet applications treat them as text. Numeric values remain numeric.
+Benchmark CSVs and experiment logs use the same sanitizer.
+
+The legacy root-level `audit_artifacts.py`, `generate_audit_artifacts.py`,
+and `generate_reports.py` scripts are not part of the current pipeline;
+`run_benchmark.py` is the supported report-generation path.
 
 ## Security model and limitations
 
