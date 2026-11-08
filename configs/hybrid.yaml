@@ -24,8 +24,7 @@ smpc:
   enabled: true
   scheme: additive_sharing
   fixed_point_scale: 1000000
-  dropout_recovery: true
-  threshold: 2
+  field_modulus: 2305843009213693951
   num_aggregation_parties: 3
 
 attacks:

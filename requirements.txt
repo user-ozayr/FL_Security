@@ -1,6 +1,6 @@
 torch>=2.0.0
 torchvision>=0.15.0
-flwr>=1.5.0
+flwr[simulation]>=1.38,<1.39
 PyYAML>=6.0
 numpy>=1.22.0
 matplotlib>=3.5.0
