@@ -343,6 +343,7 @@ def run_flower_simulation(config: dict) -> None:
                 "malicious_selected": int(len(self.last_malicious)),
                 "smpc_enabled": int(use_smpc),
                 "committees_used": int(len(self.last_round_config.get("committees", {}))),
+                "mtd_secret_seeded": int(self.last_round_config.get("secret_seeded", False)),
                 "aggregators_used": int(len({
                     int(pid) for cid in self.last_completed
                     for pid in self.last_round_config.get("committees", {}).get(cid, [])
