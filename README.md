@@ -59,6 +59,25 @@ mutual authentication), restrict ingress to the appropriate clients/coordinator,
 and use HTTPS URLs. The built-in service intentionally does not implement TLS,
 account provisioning, persistent storage, or audit logging.
 
+## MTD randomness
+
+For reproducible thesis runs, leave `FL_MTD_SECRET` unset: MTD selection and
+committee assignments are then derived from `experiment.seed` and the round.
+This is deterministic and should not be described as unpredictable to an
+adversary who knows the seed.
+
+For a live deployment, set a randomly generated secret in the Flower server
+environment only:
+
+    export FL_MTD_SECRET="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
+
+The controller derives its private round schedule from this secret and the
+configured experiment seed. The secret is not sent in Flower client
+configuration or to aggregation parties. Keep it in the server's secret
+manager, rotate it deliberately, and do not publish it with experimental
+configs. Reproducible research results should record whether secret-seeded MTD
+was enabled, but must never record the secret itself.
+
 ## Data flow
 
 1. Flower selects clients using the round-scoped MTD controller.
