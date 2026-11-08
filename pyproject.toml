@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fl_security"
-version = "0.2.0"
-description = "Research simulation for MTD and additive-SMPC protected federated learning"
+version = "0.3.0"
+description = "Flower research simulation with MTD and client-side additive secret sharing"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [

@@ -25,7 +25,8 @@ smpc:
   scheme: additive_sharing
   fixed_point_scale: 1000000
   field_modulus: 2305843009213693951
-  num_aggregation_parties: 3
+  num_aggregation_parties: 4
+  min_clients_per_round: 3
 
 attacks:
   enabled: true

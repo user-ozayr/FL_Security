@@ -14,7 +14,7 @@ def test_sign_flip_client_updates_reach_secure_fedavg():
         "experiment": {"seed": 7},
         "federated_learning": {"num_clients": 2},
         "mtd": {"enabled": True, "committee_size": 2},
-        "smpc": {"enabled": True, "num_aggregation_parties": 3},
+        "smpc": {"enabled": True, "num_aggregation_parties": 2, "min_clients_per_round": 2},
         "attacks": {
             "enabled": True,
             "attack_type": "sign_flip",
@@ -26,18 +26,16 @@ def test_sign_flip_client_updates_reach_secure_fedavg():
     attacker = ByzantineAttacker(config, num_clients=2)
     round_config = MTDController(config).generate_round_config(1, 2, 1.0)
     global_state = {"weight": torch.tensor([0.0, 0.0])}
-    honest_local_states = [
+    honest_states = [
         {"weight": torch.tensor([1.0, -2.0])},
         {"weight": torch.tensor([3.0, 4.0])},
     ]
     poisoned = [
         attacker.perturb_update(cid, 1, global_state, local)
-        for cid, local in enumerate(honest_local_states)
+        for cid, local in enumerate(honest_states)
     ]
     secure_average = weighted_fedavg(
-        poisoned,
-        [1, 1],
-        global_state,
+        poisoned, [1, 1], global_state,
         encoder=FixedPointEncoder(1_000_000),
         committees={index: round_config["committees"][cid]
                     for index, cid in enumerate(round_config["selected_clients"])},
@@ -74,11 +72,8 @@ def test_label_flip_is_applied_inside_local_training():
         )
 
     train_local(
-        model,
-        DataLoader(dataset, batch_size=2, shuffle=False),
-        epochs=1,
-        lr=0.05,
-        label_transform=flip_batch,
+        model, DataLoader(dataset, batch_size=2, shuffle=False),
+        epochs=1, lr=0.05, label_transform=flip_batch,
     )
     assert len(calls) == 2
     assert torch.equal(calls[0], torch.tensor([0, 1]))
