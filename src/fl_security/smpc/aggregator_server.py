@@ -209,7 +209,10 @@ class AggregatorState:
     ) -> None:
         """Sum this party's client shares then re-share the sum to every party."""
         self._validate_round_id(round_id)
-        canonical = json.dumps(sorted(set(str(cid) for cid in expected_client_ids)), separators=(",", ":"))
+        canonical = json.dumps(
+            sorted(set(str(cid) for cid in expected_client_ids)),
+            separators=(",", ":"),
+        )
         message = b"finalize\n" + round_id.encode() + b"\n" + canonical.encode()
         if not hmac.compare_digest(signature, _signature(self.control_token, message)):
             raise PermissionError("invalid coordinator signature")
@@ -219,49 +222,65 @@ class AggregatorState:
 
         with self.lock:
             if round_id in self.finalized:
-                previous_clients, previous_sources = self.finalized[round_id]
+                previous_clients, _ = self.finalized[round_id]
                 if previous_clients != clients:
                     raise RuntimeError("round already finalized for a different client set")
-                if set(self.reshared.get(round_id, {})) == set(previous_sources):
-                    return
-            received = self.rounds.get(round_id, {})
-            missing = [cid for cid in clients if cid not in received]
-            if missing:
-                raise RuntimeError(f"missing client shares for IDs: {missing}")
-            tensor_keys = list(received[clients[0]])
-            key_set = set(tensor_keys)
-            shapes = {key: received[clients[0]][key].shape for key in tensor_keys}
-            partial = {key: np.zeros(shapes[key], dtype=np.int64) for key in tensor_keys}
-            for cid in clients:
-                current = received[cid]
-                if set(current) != key_set:
-                    raise ValueError("client share tensor keys do not match")
-                for key in tensor_keys:
-                    if current[key].shape != shapes[key]:
-                        raise ValueError(f"tensor shape mismatch for {key}")
-                    partial[key] = np.remainder(
-                        partial[key] + current[key], self.modulus
-                    ).astype(np.int64)
-            # Create a stable cache once; retries reuse identical outgoing shares.
-            outgoing = self.outgoing.setdefault(round_id, {})
-            if not outgoing:
-                shares = {
+                # Retry every cached transfer, even when this party has already
+                # received every peer re-share. Its own outgoing delivery to one
+                # peer may still have failed on the previous attempt.
+                outgoing = dict(self.outgoing.get(round_id, {}))
+                if not outgoing:
+                    raise RuntimeError("finalized round is missing its outgoing re-share cache")
+            else:
+                received = self.rounds.get(round_id, {})
+                missing = [cid for cid in clients if cid not in received]
+                if missing:
+                    raise RuntimeError(f"missing client shares for IDs: {missing}")
+                tensor_keys = list(received[clients[0]])
+                key_set = set(tensor_keys)
+                shapes = {key: received[clients[0]][key].shape for key in tensor_keys}
+                partial = {
+                    key: np.zeros(shapes[key], dtype=np.int64)
+                    for key in tensor_keys
+                }
+                for cid in clients:
+                    current = received[cid]
+                    if set(current) != key_set:
+                        raise ValueError("client share tensor keys do not match")
+                    for key in tensor_keys:
+                        if current[key].shape != shapes[key]:
+                            raise ValueError(f"tensor shape mismatch for {key}")
+                        partial[key] = np.remainder(
+                            partial[key] + current[key], self.modulus
+                        ).astype(np.int64)
+
+                # Create and cache the Stage-2 shares once. Any retry reuses
+                # these exact messages, which makes the peer API idempotent.
+                shares_by_peer = {
                     peer_id: {}
                     for peer_id in range(self.party_count)
                 }
                 for key, value in partial.items():
-                    pieces = generate_additive_shares(value, self.party_count, self.modulus)
+                    pieces = generate_additive_shares(
+                        value, self.party_count, self.modulus
+                    )
                     for peer_id, piece in enumerate(pieces):
-                        shares[peer_id][key] = piece
+                        shares_by_peer[peer_id][key] = piece
+
+                outgoing = {}
                 for peer_id in range(self.party_count):
-                    body, keys_json = _encode_arrays(shares[peer_id])
-                    if peer_id == self.party_id:
-                        token = "internal"
-                    else:
-                        token = self.peer_tokens[str(peer_id)]
+                    body, keys_json = _encode_arrays(shares_by_peer[peer_id])
+                    token = (
+                        "internal"
+                        if peer_id == self.party_id
+                        else self.peer_tokens[str(peer_id)]
+                    )
                     outgoing[peer_id] = (body, keys_json, token)
-            self.finalized[round_id] = (clients, tuple(range(self.party_count)))
-            outgoing = dict(outgoing)
+
+                self.outgoing[round_id] = dict(outgoing)
+                self.finalized[round_id] = (
+                    clients, tuple(range(self.party_count))
+                )
 
         # Deliver outside the lock. Target endpoints are idempotent by source ID.
         for peer_id, (body, keys_json, token) in outgoing.items():
@@ -269,11 +288,14 @@ class AggregatorState:
                 self._accept_own_reshare(round_id, body, keys_json)
                 continue
             message = (
-                b"reshare\n" + round_id.encode() + b"\n" + str(self.party_id).encode()
-                + b"\n" + str(peer_id).encode() + b"\n" + keys_json.encode() + b"\n" + body
+                b"reshare\n" + round_id.encode() + b"\n"
+                + str(self.party_id).encode() + b"\n"
+                + str(peer_id).encode() + b"\n"
+                + keys_json.encode() + b"\n" + body
             )
             _post_binary(
-                self.peer_endpoints[str(peer_id)] + f"/v1/rounds/{round_id}/reshare",
+                self.peer_endpoints[str(peer_id)]
+                + f"/v1/rounds/{round_id}/reshare",
                 body,
                 {
                     "X-Source-Party": str(self.party_id),
@@ -281,8 +303,9 @@ class AggregatorState:
                     "X-Signature": _signature(token, message),
                 },
             )
+
         # Individual client shares are no longer needed once all re-share
-        # deliveries have succeeded; retain only the outgoing retry cache.
+        # deliveries have succeeded; retain outgoing cache for idempotent retry.
         with self.lock:
             self.rounds.pop(round_id, None)
             self.digests.pop(round_id, None)
