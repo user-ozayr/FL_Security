@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+import os
 
 import pandas as pd
 import torch
@@ -32,6 +33,12 @@ def test_flower_strategy_uses_client_to_party_shares_not_plaintext_updates(
     )
 
     def deterministic_flower_scheduler(client_fn, num_clients, config, strategy, **kwargs):
+        # Coordinator-only secrets must not be inherited by Ray/client workers.
+        assert "FL_SMPC_AGGREGATORS_JSON" not in os.environ
+        assert "FL_MTD_SECRET" not in os.environ
+        assert "FL_SMPC_CONTROL_TOKEN" not in os.environ
+        assert "FL_SMPC_CLIENT_KEYS_JSON" not in os.environ
+        assert "FL_SMPC_CLIENT_TOKENS_JSON" in os.environ
         proxies = {
             str(cid): SimpleNamespace(cid=str(cid)) for cid in range(num_clients)
         }
@@ -107,7 +114,10 @@ def test_flower_strategy_uses_client_to_party_shares_not_plaintext_updates(
         },
     }
 
+    mtd_secret = "mtd-secret-for-test-" + ("x" * 32)
+    monkeypatch.setenv("FL_MTD_SECRET", mtd_secret)
     run_with_local_aggregators(config)
+    assert os.environ["FL_MTD_SECRET"] == mtd_secret
 
     results = pd.read_csv(tmp_path / "flower_secure_smoke_results.csv")
     assert len(results) == 1
