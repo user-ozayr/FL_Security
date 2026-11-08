@@ -53,14 +53,13 @@ def run_with_local_aggregators(config: dict) -> None:
     processes = []
     server_config, client_config = {}, {str(cid): {} for cid in range(client_count)}
 
-    # Do not let coordinator/party credentials or the MTD root key leak into
-    # newly spawned aggregation processes. Restore the MTD key only after the
-    # party processes exist; flower_simulation removes it before Ray workers.
     protected_names = (
         "FL_SMPC_AGGREGATORS_JSON",
         "FL_SMPC_CLIENT_TOKENS_JSON",
         "FL_SMPC_CONTROL_TOKEN",
         "FL_SMPC_CLIENT_KEYS_JSON",
+        "FL_SMPC_PEER_ENDPOINTS_JSON",
+        "FL_SMPC_PEER_TOKENS_JSON",
         "FL_MTD_SECRET",
     )
     previous_env = {
@@ -70,22 +69,51 @@ def run_with_local_aggregators(config: dict) -> None:
     }
 
     try:
+        ports = {party_id: _free_port() for party_id in range(party_count)}
+        urls = {
+            str(party_id): f"http://127.0.0.1:{ports[party_id]}"
+            for party_id in range(party_count)
+        }
+        # One symmetric high-entropy secret per pair, used for both directions.
+        pair_tokens = {
+            (left, right): secrets.token_urlsafe(32)
+            for left in range(party_count)
+            for right in range(left + 1, party_count)
+        }
+        peer_tokens = {
+            party_id: {
+                str(peer): pair_tokens[(min(party_id, peer), max(party_id, peer))]
+                for peer in range(party_count)
+                if peer != party_id
+            }
+            for party_id in range(party_count)
+        }
+
         for party_id in range(party_count):
             client_keys = {
                 str(cid): secrets.token_urlsafe(32)
                 for cid in range(client_count)
             }
             control_token = secrets.token_urlsafe(32)
-            port = _free_port()
             process = context.Process(
                 target=serve_aggregator,
-                args=("127.0.0.1", port, client_keys, control_token, modulus),
+                args=(
+                    "127.0.0.1",
+                    ports[party_id],
+                    client_keys,
+                    control_token,
+                    modulus,
+                    party_id,
+                    party_count,
+                    {str(peer): url for peer, url in urls.items() if peer != party_id},
+                    peer_tokens[party_id],
+                ),
                 name=f"fl-smpc-aggregator-{party_id}",
             )
             process.start()
             processes.append(process)
             server_config[str(party_id)] = {
-                "url": f"http://127.0.0.1:{port}",
+                "url": urls[str(party_id)],
                 "control_token": control_token,
             }
             for client_id, token in client_keys.items():

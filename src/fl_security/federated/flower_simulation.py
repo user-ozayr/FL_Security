@@ -16,7 +16,7 @@ from fl_security.federated.model import CIFAR10CNN
 from fl_security.federated.training import evaluate_model, train_local
 from fl_security.mtd.controller import MTDController
 from fl_security.smpc.additive_sharing import DEFAULT_FIELD_MODULUS
-from fl_security.smpc.client_sharing import acknowledge_party, finalize_party, upload_client_update
+from fl_security.smpc.client_sharing import acknowledge_party, finalize_party, retrieve_party_share, upload_client_update
 
 
 def _load_party_configuration() -> dict[str, dict]:
@@ -273,9 +273,7 @@ def run_flower_simulation(config: dict) -> None:
                         if parameters_to_ndarrays(fit_res.parameters):
                             raise RuntimeError("SMPC mode received plaintext parameters; refusing fallback")
 
-                    parties_used = sorted({
-                        int(pid) for cid in client_ids for pid in committees[cid]
-                    })
+                    parties_used = list(range(int(smpc_config["num_aggregation_parties"])))
                     participants_by_party = {
                         party_id: [cid for cid in client_ids if party_id in committees[cid]]
                         for party_id in parties_used
@@ -290,14 +288,28 @@ def run_flower_simulation(config: dict) -> None:
                             f"{weak_parties}. Retry with more successful clients."
                         )
 
-                    party_partials = []
+                    # Stage 1: parties sum their client shares and re-share their
+                    # partial sums directly to all parties. No first-stage partial
+                    # sum is ever returned to the coordinator.
                     for party_id in parties_used:
-                        party_partials.append(finalize_party(
+                        finalize_party(
                             party_config[str(party_id)]["url"],
                             self.last_round_id,
                             participants_by_party[party_id],
                             party_config[str(party_id)]["control_token"],
-                        ))
+                        )
+
+                    # Stage 2: the coordinator sees only independent random shares
+                    # of the global sum, not the committee-partial equations.
+                    party_partials = [
+                        retrieve_party_share(
+                            party_config[str(party_id)]["url"],
+                            self.last_round_id,
+                            parties_used,
+                            party_config[str(party_id)]["control_token"],
+                        )
+                        for party_id in parties_used
+                    ]
                     aggregated = reconstruct_weighted_average(
                         party_partials, global_model.state_dict(), sum(counts), encoder, modulus
                     )

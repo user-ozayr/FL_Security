@@ -123,7 +123,7 @@ def test_party_rejects_invalid_client_authentication():
         party.close()
 
 
-def test_party_refuses_to_finalize_a_single_client_share():
+def test_party_refuses_finalization_when_an_expected_client_share_is_missing():
     client_token, control_token = secrets.token_urlsafe(24), secrets.token_urlsafe(24)
     state = AggregatorState({"0": client_token}, control_token)
     body, keys_json = _encode_arrays({"weight": np.array([1], dtype=np.int64)})
