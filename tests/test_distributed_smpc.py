@@ -33,7 +33,7 @@ class PartyHarness:
 
 
 def test_clients_send_shares_directly_and_coordinator_reconstructs_weighted_sum():
-    client_ids, party_ids = [0, 1], [0, 1, 2]
+    client_ids, party_ids = [0, 1, 2], [0, 1, 2]
     client_tokens = {
         party: {str(cid): secrets.token_urlsafe(24) for cid in client_ids}
         for party in party_ids
@@ -49,9 +49,12 @@ def test_clients_send_shares_directly_and_coordinator_reconstructs_weighted_sum(
     local_states = [
         {"weight": torch.tensor([1.25, -2.0])},
         {"weight": torch.tensor([4.0, 1.0])},
+        {"weight": torch.tensor([-0.5, 2.0])},
     ]
-    example_counts = [2, 6]
-    committees = {0: [0, 1], 1: [1, 2]}
+    example_counts = [2, 6, 4]
+    # Every committee contains two parties, and every party receives shares
+    # from two clients so no party output is a single-client contribution.
+    committees = {0: [0, 1], 1: [1, 2], 2: [0, 2]}
     round_id = "unittest-1"
 
     try:
@@ -75,17 +78,19 @@ def test_clients_send_shares_directly_and_coordinator_reconstructs_weighted_sum(
         party_partials, used_parties = [], []
         for party in party_ids:
             participants = [cid for cid in client_ids if party in committees[cid]]
-            if participants:
-                party_partials.append(finalize_party(
-                    endpoints[str(party)], round_id, participants, control_tokens[party]
-                ))
-                used_parties.append(party)
+            assert len(participants) >= 2
+            party_partials.append(finalize_party(
+                endpoints[str(party)], round_id, participants, control_tokens[party]
+            ))
+            used_parties.append(party)
 
         actual = reconstruct_weighted_average(
             party_partials, global_state, sum(example_counts), encoder
         )
         expected = weighted_fedavg(local_states, example_counts, global_state)
-        torch.testing.assert_close(actual["weight"], expected["weight"], atol=1e-6, rtol=0)
+        torch.testing.assert_close(
+            actual["weight"], expected["weight"], atol=1e-6, rtol=0
+        )
 
         for party in used_parties:
             acknowledge_party(endpoints[str(party)], round_id, control_tokens[party])
@@ -116,3 +121,21 @@ def test_party_rejects_invalid_client_authentication():
         assert exc.value.code == 403
     finally:
         party.close()
+
+
+def test_party_refuses_to_finalize_a_single_client_share():
+    client_token, control_token = secrets.token_urlsafe(24), secrets.token_urlsafe(24)
+    state = AggregatorState({"0": client_token}, control_token)
+    body, keys_json = _encode_arrays({"weight": np.array([1], dtype=np.int64)})
+    from fl_security.smpc.aggregator_server import _signature
+
+    message = b"round-one\n0\n" + keys_json.encode() + b"\n" + body
+    state.submit_share(
+        "round-one", "0", body, keys_json, _signature(client_token, message)
+    )
+    canonical = '["0"]'
+    signature = _signature(
+        control_token, b"finalize\nround-one\n" + canonical.encode()
+    )
+    with pytest.raises(ValueError, match="at least two clients"):
+        state.finalize("round-one", ["0"], signature)
