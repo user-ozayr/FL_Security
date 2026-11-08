@@ -141,6 +141,32 @@ production MPC implementation. In particular:
   inversion, and Byzantine-robust aggregation are outside the current
   implementation and must not be claimed as mitigated.
 
+## Multi-seed benchmark and statistical comparison
+
+Run baseline, MTD-only, SMPC-only and hybrid conditions with identical seeds:
+
+    python run_benchmark.py \
+      --configs configs/baseline_sign_flip.yaml configs/mtd_sign_flip.yaml \
+                 configs/smpc_sign_flip.yaml configs/hybrid.yaml \
+      --baseline baseline_sign_flip --seeds 5
+
+The runner writes one CSV per condition/seed under results/benchmark/runs,
+then produces:
+
+- all_rounds.csv: every round from every seed and condition.
+- summary_by_round.csv: per-condition/per-round mean, sample standard deviation,
+  and two-sided 95% Student-t confidence intervals.
+- paired_accuracy_differences.csv: per-seed paired differences in global test
+  accuracy and loss against the chosen baseline.
+- condition_metadata.csv: attack, defence and seed metadata.
+
+Use at least five seeds for an initial thesis comparison and more when compute
+allows. A one-seed run deliberately reports no confidence interval. These
+summaries quantify clean global test accuracy and overhead; they are not
+backdoor attack-success rates. Backdoor triggers and inference attacks are not
+implemented in this prototype, so do not report ASR or inference-resistance
+claims from these runs.
+
 ## Reproducible evaluation
 
 Compare FedAvg, MTD-only, additive-SMPC-only, and hybrid configurations while
