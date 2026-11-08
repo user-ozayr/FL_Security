@@ -258,6 +258,62 @@ defences:
     history_cosine_threshold: -0.25
 ```
 
+### Tuned detector validation (held-out seeds)
+
+The original screening thresholds (`residual_z_threshold: 3.5`,
+`min_cosine_similarity: 0.0`) detected all simulated sign-flip updates in
+the initial five-seed experiment, but the clean-data control exposed 4 false
+positives among 75 benign client-round updates (seeds 42-46). This motivated
+a candidate threshold adjustment; it is not evidence that the original
+thresholds generalize without false positives.
+
+The tuned configurations use:
+
+```yaml
+robust_aggregation:
+  enabled: true
+  max_malicious: 2
+  residual_z_threshold: 20.0
+  min_cosine_similarity: 0.1
+  max_norm_ratio: 5.0
+  min_survivors: 3
+  history_decay: 0.8
+  min_history_rounds: 2
+  history_cosine_threshold: -0.25
+```
+
+These settings were evaluated on a separate seed set (47-51):
+
+- **Clean-data control:** 0 false positives among 75 benign updates; all 75
+  updates were accepted. Final accuracy and loss matched the FedAvg control
+  in each of the five paired seeds (mean final accuracy 63.896%).
+- **Sign-flip poisoning:** 30 true positives, 0 false positives and 0 false
+  negatives across 15 rounds (five clients per round, two simulated attackers
+  per round). Observed precision and recall were both 100%; no fallback
+  aggregation was used.
+- **Model performance under sign-flip poisoning:** mean final accuracy was
+  62.850% with screening versus 46.362% for FedAvg, a paired improvement of
+  16.488 percentage points. Mean paired final-loss difference (screened minus
+  FedAvg) was -0.75540.
+
+Reproduction configurations are:
+- `fedavg_no_attack.yaml` and `robust_no_attack.yaml`: clean-data controls
+  with the original screening thresholds.
+- `robust_no_attack_tuned.yaml`: tuned clean-data control.
+- `baseline_sign_flip.yaml` and `robust_sign_flip.yaml`: original
+  sign-flip comparison.
+- `robust_sign_flip_tuned.yaml`: tuned sign-flip detector.
+
+These are controlled simulation results on IID CIFAR-10 with five clients,
+full participation, three rounds, and a 40% sign-flip attacker fraction.
+The thresholds were calibrated after inspecting earlier runs (seeds 42-46)
+and evaluated on seeds 47-51. The results therefore provide a held-out
+seed check within the same setup, not a broad generalization guarantee.
+They do not establish performance for non-IID clients, other poisoning
+strategies, different attacker proportions, or real deployments. The
+detection labels are available from simulator ground truth; they would not
+be available in an ordinary deployment.
+
 **Important security boundary:** this screening currently requires individual
 plaintext model updates at the Flower coordinator. It is therefore explicitly
 incompatible with the current additive sum-only SMPC backend; the runner
