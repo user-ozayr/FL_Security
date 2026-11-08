@@ -87,14 +87,30 @@ party receives contributions from multiple selected clients. A secure round
 is aborted if client dropouts leave a party without the required minimum
 number of client shares or if too few clients complete.
 
-For reproducible thesis runs, MTD schedules derive from experiment.seed.
-This is deterministic and should not be described as unpredictable to an
-adversary who knows the seed. A live run can set FL_MTD_SECRET in the Flower
-coordinator environment; the controller derives its private schedule from
-that server-only secret and the experiment seed. It is not sent to clients or
-aggregation parties and is removed before simulated Ray workers start.
+For reproducible thesis runs, MTD schedules derive deterministically
+from experiment.seed. This mode is repeatable but not unpredictable to an
+adversary who knows the seed. A live run must set a 32-byte-or-longer
+FL_MTD_SECRET in the Flower coordinator environment. The controller derives a
+round-scoped HMAC-SHA256 counter stream from that server-only secret and the
+experiment seed, and uses unbiased rejection sampling for selection and
+committee positions. The secret is not sent to clients or aggregation parties
+and is removed before simulated Ray workers start. The no-secret simulation
+mode must not be used as a production unpredictability guarantee.
 
-### 3.3 Poisoning attacks
+### 3.3 Flower client-result identity
+
+For each completed fit, the coordinator maps the Flower proxy ID back to the
+logical client ID assigned during registration. It rejects results from
+unregistered proxies, clients not selected for the current round, duplicate
+proxy results, and client-reported logical IDs that do not match the proxy
+mapping. This prevents a FitRes metric alone from choosing the identity used
+for aggregation and simulator telemetry. It is a runtime identity-consistency
+check, not independent cryptographic authentication of an external client.
+External deployments still require authenticated Flower transport and
+isolated client runtimes. In SMPC mode, share uploads additionally use
+per-client HMAC write tokens verified by each aggregation party.
+
+### 3.4 Poisoning attacks
 
 The simulator executes label flipping during local training and sign-flip or
 random-noise perturbations on client updates. These attacks exercise the
@@ -102,6 +118,16 @@ configured training and aggregation path. Additive sharing protects the
 confidentiality of client updates under its assumptions; it does not detect,
 filter, or neutralize poisoning. MTD changes participation and party routing;
 it is not a Byzantine-robust aggregation algorithm.
+
+### 3.5 Output artifact safeguards
+
+Experiment log filenames are restricted to a single filename within the
+configured output directory. Traversal separators, drive/alternate-stream
+syntax, and symbolic-link output targets are rejected; file creation uses
+no-follow semantics where supported. CSV text cells that could be interpreted
+as spreadsheet formulas are prefixed to force text treatment. Numeric metrics
+remain numeric. The legacy root-level audit and report scripts have been
+removed in favour of the paired benchmark runner and its sanitized CSV output.
 
 ## 4. Explicitly out of scope
 
