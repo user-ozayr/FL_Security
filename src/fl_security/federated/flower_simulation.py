@@ -363,17 +363,35 @@ def run_flower_simulation(config: dict) -> None:
     def client_fn(cid: str):
         return ResearchNumPyClient(int(cid)).to_client()
 
-    start_simulation(
-        client_fn=client_fn,
-        num_clients=num_clients,
-        config=ServerConfig(num_rounds=rounds),
-        strategy=ResearchStrategy(),
-        client_resources={
-            "num_cpus": float(config.get("flower", {}).get("client_cpus", 1)),
-            "num_gpus": float(config.get("flower", {}).get("client_gpus", 0)),
-        },
-        ray_init_args={"include_dashboard": False, "ignore_reinit_error": True},
+    # These are coordinator-only secrets. The strategy has already loaded
+    # the values it needs, so remove them before Ray starts worker processes.
+    # Client auth credentials are handled separately (and locally remain
+    # shared by the synthetic simulation runtime; see the README warning).
+    server_only_names = (
+        "FL_SMPC_AGGREGATORS_JSON",
+        "FL_MTD_SECRET",
+        "FL_SMPC_CONTROL_TOKEN",
+        "FL_SMPC_CLIENT_KEYS_JSON",
     )
+    server_only_env = {
+        name: os.environ.pop(name)
+        for name in server_only_names
+        if name in os.environ
+    }
+    try:
+        start_simulation(
+            client_fn=client_fn,
+            num_clients=num_clients,
+            config=ServerConfig(num_rounds=rounds),
+            strategy=ResearchStrategy(),
+            client_resources={
+                "num_cpus": float(config.get("flower", {}).get("client_cpus", 1)),
+                "num_gpus": float(config.get("flower", {}).get("client_gpus", 0)),
+            },
+            ray_init_args={"include_dashboard": False, "ignore_reinit_error": True},
+        )
+    finally:
+        os.environ.update(server_only_env)
     evaluation, name = config.get("evaluation", {}), experiment.get("name", "fl_security_experiment")
     if evaluation.get("save_csv", True):
         logger.save_to_csv(f"{name}_results.csv")
