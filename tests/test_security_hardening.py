@@ -155,3 +155,19 @@ def test_experiment_logger_rejects_traversal_plot_filename(tmp_path: Path):
 def test_configuration_validation_uses_exceptions_for_invalid_input():
     with pytest.raises(ValueError, match="root"):
         validate_config(None)
+
+
+def test_committees_remain_fixed_when_mtd_is_disabled():
+    config = {
+        "experiment": {"seed": 123},
+        "federated_learning": {"num_clients": 10},
+        "mtd": {"enabled": False, "committee_size": 3},
+        "smpc": {"enabled": True, "num_aggregation_parties": 5},
+    }
+    controller = MTDController(config)
+
+    first = controller.generate_round_config(1, num_clients=10, fraction=0.6)
+    second = controller.generate_round_config(2, num_clients=10, fraction=0.6)
+
+    assert first["selected_clients"] == second["selected_clients"]
+    assert first["committees"] == second["committees"]
