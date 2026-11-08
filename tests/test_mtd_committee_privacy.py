@@ -54,3 +54,27 @@ def test_smpc_refuses_round_with_too_few_selected_clients():
     controller = MTDController(_secure_mtd_config())
     with pytest.raises(ValueError, match="at least 3 selected clients"):
         controller.generate_round_config(1, num_clients=5, fraction=0.4)
+
+
+
+def test_secret_seeded_mtd_is_reproducible_but_secret_controlled(monkeypatch):
+    config = _secure_mtd_config()
+    monkeypatch.setenv("FL_MTD_SECRET", "a" * 40)
+    first = MTDController(config).generate_round_config(2, num_clients=5, fraction=0.6)
+    repeated = MTDController(config).generate_round_config(2, num_clients=5, fraction=0.6)
+    assert first["secret_seeded"] is True
+    assert first["selected_clients"] == repeated["selected_clients"]
+    assert first["committees"] == repeated["committees"]
+
+    monkeypatch.setenv("FL_MTD_SECRET", "b" * 40)
+    changed_secret = MTDController(config).generate_round_config(2, num_clients=5, fraction=0.6)
+    assert (
+        changed_secret["selected_clients"] != first["selected_clients"]
+        or changed_secret["committees"] != first["committees"]
+    )
+
+
+def test_secret_seed_requires_sufficient_entropy(monkeypatch):
+    monkeypatch.setenv("FL_MTD_SECRET", "too-short")
+    with pytest.raises(ValueError, match="at least 32 bytes"):
+        MTDController(_secure_mtd_config())
