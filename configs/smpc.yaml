@@ -1,0 +1,33 @@
+experiment:
+  name: fedavg_smpc_prototype
+  seed: 42
+  rounds: 3
+
+federated_learning:
+  framework: flower
+  dataset: cifar10
+  num_clients: 5
+  fraction_train: 0.6
+  local_epochs: 1
+  batch_size: 32
+  learning_rate: 0.1
+  partitioning: iid
+
+mtd:
+  enabled: false
+
+smpc:
+  enabled: true
+  scheme: additive_sharing
+  fixed_point_scale: 1000000
+  dropout_recovery: true
+  threshold: 2
+  num_aggregation_parties: 3
+
+attacks:
+  enabled: false
+
+evaluation:
+  save_csv: true
+  save_plots: true
+  seeds: 1

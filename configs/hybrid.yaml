@@ -1,5 +1,5 @@
 experiment:
-  name: hybrid_mtd_smpc
+  name: hybrid_mtd_smpc_attack
   seed: 42
   rounds: 3
 
@@ -29,7 +29,10 @@ smpc:
   num_aggregation_parties: 3
 
 attacks:
-  enabled: false
+  enabled: true
+  attack_type: sign_flip
+  compromised_fraction: 0.4
+  strength: 1.0
 
 evaluation:
   save_csv: true
