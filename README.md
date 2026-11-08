@@ -134,7 +134,11 @@ record the secret itself.
    clear client shares, re-share buffers, and cached output shares.
 
 In non-SMPC configurations, Flower returns model arrays to the coordinator
-and ordinary sample-weighted FedAvg is used.
+and ordinary sample-weighted FedAvg is used. The server verifies each FitRes
+logical client ID against its registered Flower proxy ID before accepting the
+result. This is an identity-consistency check within the Flower runtime, not a
+standalone cryptographic client-authentication mechanism; external deployments
+must still authenticate and protect their Flower transport and client runtime.
 
 ## Output-file and CSV safety
 
