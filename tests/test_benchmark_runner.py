@@ -1,6 +1,13 @@
 import math
+import sys
+from pathlib import Path
 
 import pandas as pd
+
+# run_benchmark.py is a root-level CLI script, not an installed package module.
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+if str(REPOSITORY_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPOSITORY_ROOT))
 
 from run_benchmark import _summarize_by_round
 
