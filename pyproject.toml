@@ -7,7 +7,7 @@ name = "fl_security"
 version = "0.2.0"
 description = "Research simulation for MTD and additive-SMPC protected federated learning"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.11"
 dependencies = [
     "torch>=2.0.0",
     "torchvision>=0.15.0",
