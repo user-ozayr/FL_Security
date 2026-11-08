@@ -128,6 +128,14 @@ def test_experiment_logger_rejects_traversal_and_writes_plain_csv(tmp_path: Path
         logger.save_to_csv("../outside.csv")
     with pytest.raises(ValueError, match="single"):
         logger.save_to_csv("nested/outside.csv")
+    with pytest.raises(ValueError, match="single"):
+        logger.save_to_csv("C:outside.csv")
+
+    outside = tmp_path.parent / "symlink-target.csv"
+    outside.write_text("do not overwrite", encoding="utf-8")
+    (tmp_path / "linked.csv").symlink_to(outside)
+    with pytest.raises(ValueError, match="output_dir"):
+        logger.save_to_csv("linked.csv")
 
     logger.save_to_csv("safe.csv")
     with (tmp_path / "safe.csv").open(newline="", encoding="utf-8") as handle:
