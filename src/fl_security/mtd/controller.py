@@ -56,7 +56,8 @@ class MTDController:
             raise ValueError("round_num must be positive")
         moving = self.enabled and self.config.get("change_every_round", True)
         round_seed = self.seed + round_num if moving else self.seed
-        round_material = f"round:{round_num}:seed:{round_seed}".encode("ascii")
+        schedule_scope = f"round:{round_num}" if moving else "static-round-schedule"
+        round_material = f"{schedule_scope}:seed:{round_seed}".encode("ascii")
         round_key = hmac.new(self._random_key, round_material, hashlib.sha256).digest()
         rng = HMACCounterRNG(round_key)
 
