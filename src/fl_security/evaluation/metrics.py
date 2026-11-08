@@ -27,6 +27,7 @@ class ExperimentLogger:
             or "\x00" in filename
             or "/" in filename
             or "\\" in filename
+            or ":" in filename
             or Path(filename).is_absolute()
             or Path(filename).name != filename
             or Path(filename).suffix.lower() != required_suffix
