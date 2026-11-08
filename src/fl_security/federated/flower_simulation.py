@@ -11,7 +11,7 @@ from torch.utils.data import DataLoader
 from fl_security.attacks.byzantine import ByzantineAttacker
 from fl_security.evaluation.metrics import ExperimentLogger
 from fl_security.federated.aggregation import reconstruct_weighted_average, weighted_fedavg
-from fl_security.federated.robust_aggregation import robust_filter_and_aggregate
+from fl_security.federated.robust_aggregation import RobustUpdateDetector
 from fl_security.federated.dataset import load_cifar10_data, partition_data
 from fl_security.federated.model import CIFAR10CNN
 from fl_security.federated.training import evaluate_model, train_local
@@ -187,6 +187,21 @@ def run_flower_simulation(config: dict) -> None:
             self.last_aggregation_seconds, self.last_share_bytes = 0.0, 0
             self.last_cleanup_failures, self.last_round_id = 0, ""
             self.last_robust_report = {}
+            self.robust_detector = (
+                RobustUpdateDetector(
+                    max_malicious=int(robust_config.get("max_malicious", 1)),
+                    residual_z_threshold=float(robust_config.get("residual_z_threshold", 3.5)),
+                    min_cosine_similarity=float(robust_config.get("min_cosine_similarity", 0.0)),
+                    max_norm_ratio=float(robust_config.get("max_norm_ratio", 5.0)),
+                    min_survivors=int(robust_config.get("min_survivors", 2)),
+                    history_decay=float(robust_config.get("history_decay", 0.8)),
+                    min_history_rounds=int(robust_config.get("min_history_rounds", 2)),
+                    history_cosine_threshold=float(
+                        robust_config.get("history_cosine_threshold", -0.25)
+                    ),
+                )
+                if robust_enabled else None
+            )
 
         def _round_parties(self):
             if not use_smpc:
@@ -344,20 +359,11 @@ def run_flower_simulation(config: dict) -> None:
                         for key, array in zip(state_keys, arrays)
                     })
                 if robust_enabled:
-                    aggregated, self.last_robust_report = robust_filter_and_aggregate(
+                    aggregated, self.last_robust_report = self.robust_detector.aggregate(
                         client_states,
                         counts,
                         global_model.state_dict(),
                         client_ids=client_ids,
-                        max_malicious=int(robust_config.get("max_malicious", 1)),
-                        residual_z_threshold=float(
-                            robust_config.get("residual_z_threshold", 3.5)
-                        ),
-                        min_cosine_similarity=float(
-                            robust_config.get("min_cosine_similarity", 0.0)
-                        ),
-                        max_norm_ratio=float(robust_config.get("max_norm_ratio", 5.0)),
-                        min_survivors=int(robust_config.get("min_survivors", 2)),
                     )
                 else:
                     self.last_robust_report = {}
@@ -433,6 +439,34 @@ def run_flower_simulation(config: dict) -> None:
                 "robust_fallback_used": int(
                     self.last_robust_report.get("fallback_used", False)
                 ),
+                "flagged_client_count": int(
+                    self.last_robust_report.get("flagged_client_count", 0)
+                ),
+                "history_updated_client_ids": json.dumps(
+                    self.last_robust_report.get("history_updated_client_ids", [])
+                ),
+                "detection_true_positives": int(
+                    len(set(self.last_robust_report.get("detected_client_ids", []))
+                        & set(self.last_malicious))
+                ),
+                "detection_false_positives": int(
+                    len(set(self.last_robust_report.get("detected_client_ids", []))
+                        - set(self.last_malicious))
+                ),
+                "detection_false_negatives": int(
+                    len(set(self.last_malicious)
+                        - set(self.last_robust_report.get("detected_client_ids", [])))
+                ),
+                "detection_precision": (
+                    len(set(self.last_robust_report.get("detected_client_ids", []))
+                        & set(self.last_malicious))
+                    / max(1, len(self.last_robust_report.get("detected_client_ids", [])))
+                ) if robust_enabled else None,
+                "detection_recall": (
+                    len(set(self.last_robust_report.get("detected_client_ids", []))
+                        & set(self.last_malicious))
+                    / max(1, len(self.last_malicious))
+                ) if robust_enabled else None,
                 "robust_client_scores_json": json.dumps(
                     self.last_robust_report.get("client_scores", []),
                     separators=(",", ":"),

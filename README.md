@@ -213,11 +213,19 @@ total network traffic.
 
 The optional robust-update module is a first integrity layer for research
 experiments. It computes each completed client's update relative to the
-current global model, compares update vectors with the coordinate-wise median,
-and reports median-residual, cosine-direction, and update-norm indicators.
-Suspicious updates can be excluded before sample-weighted FedAvg. If screening
-would leave fewer than the configured minimum survivors, the implementation
-falls back to coordinate-wise median aggregation.
+current global model and scores four signals: MAD-normalized distance from
+the coordinate-wise median, cosine alignment with the current cohort median
+direction, update norm relative to the cohort median norm, and temporal
+contribution consistency measured by cosine similarity with an exponential
+moving average of that client's previously accepted update directions.
+Historical profiles are updated only from non-flagged clients after a
+successful screened-FedAvg round. Suspicious updates can be excluded before
+sample-weighted FedAvg. If screening would leave fewer than the configured
+minimum survivors, the implementation falls back to coordinate-wise median
+aggregation and does not update client history. The experiment logs detected,
+accepted and flagged client IDs, individual score details, and detection
+true-positive/false-positive/false-negative counts against simulator ground
+truth.
 
 Enable it with a `defences.robust_aggregation` section in a configuration:
 
@@ -230,6 +238,9 @@ defences:
     min_cosine_similarity: 0.0
     max_norm_ratio: 5.0
     min_survivors: 3
+    history_decay: 0.8
+    min_history_rounds: 2
+    history_cosine_threshold: -0.25
 ```
 
 **Important security boundary:** this screening currently requires individual

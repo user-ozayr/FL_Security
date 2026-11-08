@@ -33,6 +33,9 @@ defences:
     min_cosine_similarity: 0.0
     max_norm_ratio: 5.0
     min_survivors: 3
+    history_decay: 0.8
+    min_history_rounds: 2
+    history_cosine_threshold: -0.25
 
 evaluation:
   save_csv: true

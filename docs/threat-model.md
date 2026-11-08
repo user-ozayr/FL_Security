@@ -155,3 +155,33 @@ not a protection that should be claimed for the hybrid configuration.
 A future privacy-preserving poisoning defence must compute the relevant
 robust statistics and client-selection decisions inside an MPC protocol,
 rather than exporting individual updates to the coordinator.
+
+
+## 7. Robust update screening
+
+In plaintext validation mode, the optional stateful robust detector evaluates
+completed client updates using four signals: (1) distance from the
+coordinate-wise median normalized by median absolute deviation, (2) cosine
+similarity to the current cohort median direction, (3) update norm relative
+to the cohort median norm, and (4) contribution consistency measured by
+cosine similarity with an exponential moving average of the client's
+previously accepted normalized update directions. A historical inconsistency
+is considered only after a configurable minimum history length. Flagged
+updates are ranked and no more than the configured maximum malicious-client
+count is rejected in one round. The remaining clients are aggregated with
+sample-weighted FedAvg. If the minimum survivor count would not be met, a
+coordinate-wise median fallback is used and no individual history profiles
+are updated in that round.
+
+For controlled experiments, per-round telemetry records detected IDs,
+accepted IDs, per-client scores and reasons, and detection true-positive,
+false-positive and false-negative counts against simulator ground truth.
+These labels are available only in the experiment simulator; a real
+deployment does not know the identity of malicious clients in advance.
+
+The detector is heuristic. It may falsely flag honest clients with
+non-IID data, concept drift, or legitimate changing objectives; adaptive or
+colluding attackers may remain statistically consistent. Its plaintext
+operation is not compatible with the present sum-only SMPC backend. A
+privacy-preserving version would need to implement the required robust
+statistics, temporal scoring, and selection within secure computation.
