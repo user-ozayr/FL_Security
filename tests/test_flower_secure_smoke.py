@@ -1,7 +1,9 @@
+from dataclasses import replace
 from types import SimpleNamespace
 import os
 
 import pandas as pd
+import pytest
 import torch
 from torch.utils.data import TensorDataset
 
@@ -69,6 +71,16 @@ def test_flower_strategy_uses_client_to_party_shares_not_plaintext_updates(
             loss, evaluation_metrics = strategy.evaluate(server_round, parameters)
             assert loss >= 0
             assert 0.0 <= evaluation_metrics["accuracy"] <= 1.0
+
+            # A malicious client cannot inflate its FedAvg weight by lying
+            # about num_examples in FitRes; the server knows each partition size.
+            forged_results = [
+                (proxy, replace(fit_res, num_examples=fit_res.num_examples + 1))
+                if index == 0 else (proxy, fit_res)
+                for index, (proxy, fit_res) in enumerate(results)
+            ]
+            with pytest.raises(RuntimeError, match="example counts"):
+                strategy.aggregate_fit(server_round, forged_results, [])
 
         return None
 
