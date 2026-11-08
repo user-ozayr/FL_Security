@@ -51,11 +51,23 @@ def run_with_local_aggregators(config: dict) -> None:
     modulus = int(smpc.get("field_modulus", DEFAULT_FIELD_MODULUS))
     context = mp.get_context("spawn")
     processes = []
-    server_config, client_config = {}, {
-        str(cid): {} for cid in range(client_count)
+    server_config, client_config = {}, {str(cid): {} for cid in range(client_count)}
+
+    # Do not let coordinator/party credentials or the MTD root key leak into
+    # newly spawned aggregation processes. Restore the MTD key only after the
+    # party processes exist; flower_simulation removes it before Ray workers.
+    protected_names = (
+        "FL_SMPC_AGGREGATORS_JSON",
+        "FL_SMPC_CLIENT_TOKENS_JSON",
+        "FL_SMPC_CONTROL_TOKEN",
+        "FL_SMPC_CLIENT_KEYS_JSON",
+        "FL_MTD_SECRET",
+    )
+    previous_env = {
+        name: os.environ.pop(name)
+        for name in protected_names
+        if name in os.environ
     }
-    previous_server = os.environ.get("FL_SMPC_AGGREGATORS_JSON")
-    previous_client = os.environ.get("FL_SMPC_CLIENT_TOKENS_JSON")
 
     try:
         for party_id in range(party_count):
@@ -88,16 +100,14 @@ def run_with_local_aggregators(config: dict) -> None:
         os.environ["FL_SMPC_CLIENT_TOKENS_JSON"] = json.dumps(
             client_config, separators=(",", ":")
         )
+        if "FL_MTD_SECRET" in previous_env:
+            os.environ["FL_MTD_SECRET"] = previous_env["FL_MTD_SECRET"]
+
         run_flower_simulation(config)
     finally:
-        for name, previous in (
-            ("FL_SMPC_AGGREGATORS_JSON", previous_server),
-            ("FL_SMPC_CLIENT_TOKENS_JSON", previous_client),
-        ):
-            if previous is None:
-                os.environ.pop(name, None)
-            else:
-                os.environ[name] = previous
+        for name in protected_names:
+            os.environ.pop(name, None)
+        os.environ.update(previous_env)
         for process in processes:
             if process.is_alive():
                 process.terminate()
