@@ -11,6 +11,7 @@ from torch.utils.data import DataLoader
 from fl_security.attacks.byzantine import ByzantineAttacker
 from fl_security.evaluation.metrics import ExperimentLogger
 from fl_security.federated.aggregation import reconstruct_weighted_average, weighted_fedavg
+from fl_security.federated.robust_aggregation import robust_filter_and_aggregate
 from fl_security.federated.dataset import load_cifar10_data, partition_data
 from fl_security.federated.model import CIFAR10CNN
 from fl_security.federated.training import evaluate_model, train_local
@@ -83,6 +84,17 @@ def run_flower_simulation(config: dict) -> None:
     modulus = int(smpc_config.get("field_modulus", DEFAULT_FIELD_MODULUS))
     min_clients = int(smpc_config.get("min_clients_per_round", 2))
     encoder, party_config = None, {}
+    robust_config = config.get("defences", {}).get("robust_aggregation", {})
+    robust_enabled = bool(robust_config.get("enabled", False))
+    if use_smpc and robust_enabled:
+        raise ValueError(
+            "Individual-update robust screening is not available with the current "
+            "sum-only SMPC backend. Do not enable it until robust scoring and "
+            "selection are implemented inside MPC."
+        )
+    if robust_enabled and num_clients < int(robust_config.get("min_survivors", 2)):
+        raise ValueError("robust aggregation requires at least min_survivors clients")
+
     if use_smpc:
         from fl_security.smpc.fixed_point import FixedPointEncoder
         encoder = FixedPointEncoder(int(smpc_config.get("fixed_point_scale", 1_000_000)))
@@ -174,6 +186,7 @@ def run_flower_simulation(config: dict) -> None:
             self.last_selected, self.last_completed, self.last_malicious = [], [], []
             self.last_aggregation_seconds, self.last_share_bytes = 0.0, 0
             self.last_cleanup_failures, self.last_round_id = 0, ""
+            self.last_robust_report = {}
 
         def _round_parties(self):
             if not use_smpc:
@@ -330,7 +343,27 @@ def run_flower_simulation(config: dict) -> None:
                         key: torch.from_numpy(array.copy())
                         for key, array in zip(state_keys, arrays)
                     })
-                aggregated = weighted_fedavg(client_states, counts, global_model.state_dict())
+                if robust_enabled:
+                    aggregated, self.last_robust_report = robust_filter_and_aggregate(
+                        client_states,
+                        counts,
+                        global_model.state_dict(),
+                        client_ids=client_ids,
+                        max_malicious=int(robust_config.get("max_malicious", 1)),
+                        residual_z_threshold=float(
+                            robust_config.get("residual_z_threshold", 3.5)
+                        ),
+                        min_cosine_similarity=float(
+                            robust_config.get("min_cosine_similarity", 0.0)
+                        ),
+                        max_norm_ratio=float(robust_config.get("max_norm_ratio", 5.0)),
+                        min_survivors=int(robust_config.get("min_survivors", 2)),
+                    )
+                else:
+                    self.last_robust_report = {}
+                    aggregated = weighted_fedavg(
+                        client_states, counts, global_model.state_dict()
+                    )
                 global_model.load_state_dict(aggregated)
 
             self.last_aggregation_seconds = time.perf_counter() - started
@@ -383,6 +416,26 @@ def run_flower_simulation(config: dict) -> None:
                 "aggregator_cleanup_failures": int(self.last_cleanup_failures),
                 "client_failures_or_omissions": int(
                     max(0, len(self.last_selected) - len(self.last_completed))
+                ),
+                "robust_aggregation_enabled": int(robust_enabled),
+                "robust_aggregation_rule": self.last_robust_report.get(
+                    "aggregation_rule", "fedavg"
+                ),
+                "detected_client_count": int(
+                    self.last_robust_report.get("detected_client_count", 0)
+                ),
+                "detected_client_ids": json.dumps(
+                    self.last_robust_report.get("detected_client_ids", [])
+                ),
+                "accepted_client_ids": json.dumps(
+                    self.last_robust_report.get("accepted_client_ids", self.last_completed)
+                ),
+                "robust_fallback_used": int(
+                    self.last_robust_report.get("fallback_used", False)
+                ),
+                "robust_client_scores_json": json.dumps(
+                    self.last_robust_report.get("client_scores", []),
+                    separators=(",", ":"),
                 ),
             })
             return float(loss), {"accuracy": float(accuracy)}

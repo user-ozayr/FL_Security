@@ -139,3 +139,19 @@ For a meaningful multi-party trust boundary, deploy parties in separate
 administrative domains, use TLS/mTLS, provision pairwise party keys only to
 the intended pair, and provision each client's own party tokens only into that
 client's isolated runtime.
+
+
+## 6. Robust poisoning screening status
+
+The current codebase contains an optional plaintext update-screening mode:
+median-residual and cosine-direction anomaly indicators, update-norm checks,
+and filtering before sample-weighted aggregation, with a coordinate-wise
+median fallback. It is not enabled by the legacy benchmark configurations.
+It is not available together with the current SMPC implementation, because
+that backend exposes only aggregate sums and does not securely evaluate
+comparisons or anomaly scores. This is a documented integrity/privacy gap,
+not a protection that should be claimed for the hybrid configuration.
+
+A future privacy-preserving poisoning defence must compute the relevant
+robust statistics and client-selection decisions inside an MPC protocol,
+rather than exporting individual updates to the coordinator.

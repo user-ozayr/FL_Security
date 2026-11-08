@@ -208,3 +208,38 @@ malicious-client participation, paired accuracy/loss differences, aggregation
 time, party count, and application share payload bytes. The byte count excludes
 HTTP/TLS framing and transport retries; report it as application payload, not
 total network traffic.
+
+## Poisoning detection and robust aggregation (plaintext validation mode)
+
+The optional robust-update module is a first integrity layer for research
+experiments. It computes each completed client's update relative to the
+current global model, compares update vectors with the coordinate-wise median,
+and reports median-residual, cosine-direction, and update-norm indicators.
+Suspicious updates can be excluded before sample-weighted FedAvg. If screening
+would leave fewer than the configured minimum survivors, the implementation
+falls back to coordinate-wise median aggregation.
+
+Enable it with a `defences.robust_aggregation` section in a configuration:
+
+```yaml
+defences:
+  robust_aggregation:
+    enabled: true
+    max_malicious: 2
+    residual_z_threshold: 3.5
+    min_cosine_similarity: 0.0
+    max_norm_ratio: 5.0
+    min_survivors: 3
+```
+
+**Important security boundary:** this screening currently requires individual
+plaintext model updates at the Flower coordinator. It is therefore explicitly
+incompatible with the current additive sum-only SMPC backend; the runner
+rejects configurations that enable both. This is deliberate. Ordinary
+additive sharing supports sums, not secure pairwise distances, medians, or
+comparisons. The robust detector is a heuristic and is not a formal Byzantine
+guarantee. It can flag benign non-IID updates and may miss coordinated or
+adaptive poisoning. The next research step is to implement robust scoring and
+selection inside a malicious-secure MPC protocol, or to introduce a separately
+trusted and independently administered validation boundary with an explicit
+trust assumption.
