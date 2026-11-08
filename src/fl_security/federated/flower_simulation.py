@@ -4,6 +4,7 @@ import json
 import os
 import re
 import time
+import uuid
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
@@ -174,6 +175,27 @@ def run_flower_simulation(config: dict) -> None:
             self.last_aggregation_seconds, self.last_share_bytes = 0.0, 0
             self.last_cleanup_failures, self.last_round_id = 0, ""
 
+        def _round_parties(self):
+            if not use_smpc:
+                return []
+            committees = self.last_round_config.get("committees", {})
+            return sorted({
+                int(pid) for cid in self.last_selected for pid in committees.get(cid, [])
+            })
+
+        def _clear_round_parties(self):
+            self.last_cleanup_failures = 0
+            for party_id in self._round_parties():
+                try:
+                    acknowledge_party(
+                        party_config[str(party_id)]["url"],
+                        self.last_round_id,
+                        party_config[str(party_id)]["control_token"],
+                    )
+                except Exception as exc:
+                    self.last_cleanup_failures += 1
+                    print(f"Warning: failed to clear aggregator {party_id} round state: {exc}")
+
         def initialize_parameters(self, client_manager):
             return initial_parameters
 
@@ -183,7 +205,8 @@ def run_flower_simulation(config: dict) -> None:
                 server_round, num_clients, float(fl_config.get("fraction_train", 1.0))
             )
             self.last_selected = list(self.last_round_config["selected_clients"])
-            self.last_round_id = f"{experiment_prefix}-round-{server_round}"
+            # Unique unpredictable round identifier prevents replay across reruns.
+            self.last_round_id = f"{experiment_prefix}-r{server_round}-{uuid.uuid4().hex}"
             instructions = []
             for cid in self.last_selected:
                 proxy = available.get(str(cid))
@@ -210,6 +233,7 @@ def run_flower_simulation(config: dict) -> None:
         def aggregate_fit(self, server_round, results, failures):
             if not results:
                 self.last_completed = []
+                self._clear_round_parties()
                 return None, {}
             committees = self.last_round_config["committees"]
             client_ids = [int(proxy.cid) for proxy, _ in results]
@@ -221,62 +245,53 @@ def run_flower_simulation(config: dict) -> None:
             self.last_share_bytes = sum(
                 int(fit_res.metrics.get("share_payload_bytes", 0)) for _, fit_res in results
             )
-            self.last_cleanup_failures = 0
             started = time.perf_counter()
 
             if use_smpc:
-                if len(client_ids) < min_clients:
-                    raise RuntimeError(
-                        f"Only {len(client_ids)} clients completed; SMPC requires {min_clients}. "
-                        "Aborting this round to avoid a low-cardinality aggregate."
-                    )
-                for _, fit_res in results:
-                    if fit_res.metrics.get("shares_uploaded") != 1:
-                        raise RuntimeError("Flower client did not confirm share uploads")
-                    if parameters_to_ndarrays(fit_res.parameters):
-                        raise RuntimeError("SMPC mode received plaintext parameters; refusing fallback")
+                try:
+                    if len(client_ids) < min_clients:
+                        raise RuntimeError(
+                            f"Only {len(client_ids)} clients completed; SMPC requires {min_clients}. "
+                            "Aborting this round to avoid a low-cardinality aggregate."
+                        )
+                    for _, fit_res in results:
+                        if fit_res.metrics.get("shares_uploaded") != 1:
+                            raise RuntimeError("Flower client did not confirm share uploads")
+                        if parameters_to_ndarrays(fit_res.parameters):
+                            raise RuntimeError("SMPC mode received plaintext parameters; refusing fallback")
 
-                parties_used = sorted({
-                    int(pid) for cid in client_ids for pid in committees[cid]
-                })
-                participants_by_party = {
-                    party_id: [
-                        cid for cid in client_ids if party_id in committees[cid]
+                    parties_used = sorted({
+                        int(pid) for cid in client_ids for pid in committees[cid]
+                    })
+                    participants_by_party = {
+                        party_id: [cid for cid in client_ids if party_id in committees[cid]]
+                        for party_id in parties_used
+                    }
+                    weak_parties = [
+                        party_id for party_id, members in participants_by_party.items()
+                        if len(members) < 2
                     ]
-                    for party_id in parties_used
-                }
-                weak_parties = [
-                    party_id for party_id, members in participants_by_party.items()
-                    if len(members) < 2
-                ]
-                if weak_parties:
-                    raise RuntimeError(
-                        "SMPC round aborted: these parties received fewer than two client shares: "
-                        f"{weak_parties}. Retry with more successful clients."
-                    )
+                    if weak_parties:
+                        raise RuntimeError(
+                            "SMPC round aborted: parties received fewer than two client shares: "
+                            f"{weak_parties}. Retry with more successful clients."
+                        )
 
-                party_partials = []
-                for party_id in parties_used:
-                    party_partials.append(finalize_party(
-                        party_config[str(party_id)]["url"],
-                        self.last_round_id,
-                        participants_by_party[party_id],
-                        party_config[str(party_id)]["control_token"],
-                    ))
-                aggregated = reconstruct_weighted_average(
-                    party_partials, global_model.state_dict(), sum(counts), encoder, modulus
-                )
-                global_model.load_state_dict(aggregated)
-                for party_id in parties_used:
-                    try:
-                        acknowledge_party(
+                    party_partials = []
+                    for party_id in parties_used:
+                        party_partials.append(finalize_party(
                             party_config[str(party_id)]["url"],
                             self.last_round_id,
+                            participants_by_party[party_id],
                             party_config[str(party_id)]["control_token"],
-                        )
-                    except Exception as exc:
-                        self.last_cleanup_failures += 1
-                        print(f"Warning: failed to clear aggregator {party_id} round state: {exc}")
+                        ))
+                    aggregated = reconstruct_weighted_average(
+                        party_partials, global_model.state_dict(), sum(counts), encoder, modulus
+                    )
+                    global_model.load_state_dict(aggregated)
+                finally:
+                    # Also removes partial uploads from failed clients and cached party sums.
+                    self._clear_round_parties()
             else:
                 client_states = []
                 for _, fit_res in results:
