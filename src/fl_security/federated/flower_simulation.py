@@ -5,6 +5,7 @@ import os
 import re
 import time
 import uuid
+from numbers import Integral
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
@@ -53,6 +54,50 @@ def _load_client_tokens(client_id: int) -> dict[str, str]:
         return {str(pid): str(token) for pid, token in config.items()}
     raise ValueError(f"no client-local credentials found for client {client_id}")
 
+
+
+def _resolve_authenticated_client_ids(results, proxy_id_by_client, selected_client_ids):
+    """Bind every FitRes identity to its registered Flower proxy.
+
+    The client_id metric is client supplied and is never trusted on its own.
+    Flower's registered proxy ID is the simulation/runtime identity anchor.
+    """
+    if not isinstance(proxy_id_by_client, dict) or not proxy_id_by_client:
+        raise RuntimeError("Flower proxy identity map has not been initialized")
+
+    proxy_to_logical = {}
+    for logical_id, proxy_id in proxy_id_by_client.items():
+        logical = int(logical_id)
+        proxy = str(proxy_id)
+        if proxy in proxy_to_logical:
+            raise RuntimeError("Flower proxy identity map contains duplicate proxies")
+        proxy_to_logical[proxy] = logical
+
+    selected = {int(client_id) for client_id in selected_client_ids}
+    resolved = []
+    for client_proxy, fit_res in results:
+        proxy_id = getattr(client_proxy, "cid", None)
+        logical_id = proxy_to_logical.get(str(proxy_id))
+        if proxy_id is None or logical_id is None:
+            raise RuntimeError("Flower returned a result from an unregistered proxy")
+        if logical_id not in selected:
+            raise RuntimeError("Flower returned a result from a client not selected this round")
+
+        metrics = getattr(fit_res, "metrics", {})
+        reported_id = metrics.get("client_id") if isinstance(metrics, dict) else None
+        if (
+            isinstance(reported_id, bool)
+            or not isinstance(reported_id, Integral)
+            or int(reported_id) != logical_id
+        ):
+            raise RuntimeError(
+                "Client-reported identity does not match its registered Flower proxy"
+            )
+        resolved.append(logical_id)
+
+    if len(set(resolved)) != len(resolved):
+        raise RuntimeError("Flower returned duplicate client results for a round")
+    return resolved
 
 def run_flower_simulation(config: dict) -> None:
     """Run Flower client training; SMPC clients upload shares directly to party services."""
@@ -352,15 +397,9 @@ def run_flower_simulation(config: dict) -> None:
                 self._clear_round_parties()
                 return None, {}
             committees = self.last_round_config["committees"]
-            client_ids = []
-            for _, fit_res in results:
-                if "client_id" not in fit_res.metrics:
-                    raise RuntimeError(
-                        "Flower FitRes is missing the logical client_id metric"
-                    )
-                client_ids.append(int(fit_res.metrics["client_id"]))
-            if len(set(client_ids)) != len(client_ids):
-                raise RuntimeError("Flower returned duplicate client results for a round")
+            client_ids = _resolve_authenticated_client_ids(
+                results, self.proxy_id_by_client, self.last_selected
+            )
             reported_counts = [int(fit_res.num_examples) for _, fit_res in results]
             counts = [len(client_datasets[cid]) for cid in client_ids]
             count_mismatches = [
@@ -615,7 +654,7 @@ def run_flower_simulation(config: dict) -> None:
         os.environ.update(server_only_env)
     evaluation, name = config.get("evaluation", {}), experiment.get("name", "fl_security_experiment")
     if evaluation.get("save_csv", True):
-        logger.save_to_csv(f"{name}_results.csv")
+        logger.save_to_csv(f"{slug}_results.csv")
     if evaluation.get("save_plots", True):
-        logger.plot_metrics(f"{name}_accuracy.png")
+        logger.plot_metrics(f"{slug}_accuracy.png")
     print(f"Flower experiment '{name}' completed.")
