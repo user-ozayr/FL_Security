@@ -17,6 +17,10 @@ smpc.num_aggregation_parties, runs the Flower simulation, then shuts the
 party processes down. CIFAR-10 is downloaded by torchvision into ./data;
 metrics are written to ./results.
 
+The experiment server is pinned to the legacy Flower 1.38.x simulation API
+(`start_simulation` plus a custom `Strategy`). It is not yet migrated to the
+`ClientApp`/`ServerApp` project model.
+
 The local party processes share one host and kernel with the coordinator and
 clients. The local helper places the per-client token map in the shared
 simulation worker environment so credentials can be routed by client ID; this
@@ -90,9 +94,10 @@ was enabled, but must never record the secret itself.
    floating-point model tensors, creates additive shares over the prime field
    Z_q using OS-backed cryptographic randomness, and POSTs one share directly
    to each party in its MTD committee.
-5. The Flower client returns an empty parameter payload and the local example
-   count. The Flower coordinator therefore receives no individual update
-   arrays in SMPC mode.
+5. The Flower client returns an empty parameter payload and its local example
+   count. The coordinator verifies that the reported count matches the
+   server-known simulation partition and uses the server-known count for
+   weighting; it receives no individual update arrays in SMPC mode.
 6. Each aggregation party verifies the client HMAC, sums shares only for
    clients in the successful participant set, clears individual shares after
    finalization, and returns its partial sum.
@@ -155,7 +160,8 @@ then produces:
 
 - all_rounds.csv: every round from every seed and condition.
 - summary_by_round.csv: per-condition/per-round mean, sample standard deviation,
-  and two-sided 95% Student-t confidence intervals.
+  and two-sided 95% Student-t confidence intervals for up to 31 seeds (a
+  normal approximation is used for larger samples).
 - paired_accuracy_differences.csv: per-seed paired differences in global test
   accuracy and loss against the chosen baseline.
 - condition_metadata.csv: attack, defence and seed metadata.
@@ -171,8 +177,8 @@ claims from these runs.
 
 Compare FedAvg, MTD-only, additive-SMPC-only, and hybrid configurations while
 holding the dataset, partitioning, model, local epochs, optimizer, client
-fraction, malicious-client population, and random seeds constant. Run multiple
-seeds and report mean, standard deviation, confidence intervals, clean
-accuracy, attack-specific metrics, aggregation time, party count, and actual
-share payload bytes. The byte count excludes HTTP/TLS framing and transport
+fraction, malicious-client population, and paired random seeds constant.
+Report mean, standard deviation, confidence intervals, clean test accuracy,
+malicious-client participation, paired accuracy/loss differences, aggregation
+time, party count, and actual share payload bytes. The byte count excludes HTTP/TLS framing and transport
 retries; report it as application payload, not total network traffic.
