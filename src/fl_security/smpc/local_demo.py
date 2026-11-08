@@ -105,7 +105,7 @@ def run_with_local_aggregators(config: dict) -> None:
                     modulus,
                     party_id,
                     party_count,
-                    {str(peer): url for peer, url in urls.items() if peer != party_id},
+                    {str(peer): url for peer, url in urls.items() if int(peer) != party_id},
                     peer_tokens[party_id],
                 ),
                 name=f"fl-smpc-aggregator-{party_id}",
