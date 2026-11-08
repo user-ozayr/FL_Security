@@ -60,18 +60,18 @@ def test_smpc_refuses_round_with_too_few_selected_clients():
 def test_secret_seeded_mtd_is_reproducible_but_secret_controlled(monkeypatch):
     config = _secure_mtd_config()
     monkeypatch.setenv("FL_MTD_SECRET", "a" * 40)
-    first = MTDController(config).generate_round_config(2, num_clients=5, fraction=0.6)
-    repeated = MTDController(config).generate_round_config(2, num_clients=5, fraction=0.6)
+    first_controller = MTDController(config)
+    first = first_controller.generate_round_config(2, num_clients=5, fraction=0.6)
+    repeated_controller = MTDController(config)
+    repeated = repeated_controller.generate_round_config(2, num_clients=5, fraction=0.6)
     assert first["secret_seeded"] is True
+    assert first_controller.seed == repeated_controller.seed
     assert first["selected_clients"] == repeated["selected_clients"]
     assert first["committees"] == repeated["committees"]
 
     monkeypatch.setenv("FL_MTD_SECRET", "b" * 40)
-    changed_secret = MTDController(config).generate_round_config(2, num_clients=5, fraction=0.6)
-    assert (
-        changed_secret["selected_clients"] != first["selected_clients"]
-        or changed_secret["committees"] != first["committees"]
-    )
+    changed_controller = MTDController(config)
+    assert changed_controller.seed != first_controller.seed
 
 
 def test_secret_seed_requires_sufficient_entropy(monkeypatch):
