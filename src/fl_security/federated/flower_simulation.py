@@ -1,4 +1,4 @@
-"""Flower-backed simulation adapter for the FL/MTD/SMPC research pipeline."""
+"""Flower-backed simulation adapter for the FL/MTD/additive-sharing pipeline."""
 from __future__ import annotations
 import time
 import numpy as np
@@ -14,7 +14,7 @@ from fl_security.mtd.controller import MTDController
 from fl_security.smpc.additive_sharing import DEFAULT_FIELD_MODULUS
 
 def run_flower_simulation(config: dict) -> None:
-    """Run client training and custom server aggregation through Flower."""
+    """Run Flower client training and a coordinator-side sharing arithmetic simulation."""
     try:
         from flwr.client import NumPyClient
         from flwr.common import FitIns, ndarrays_to_parameters, parameters_to_ndarrays
@@ -30,24 +30,23 @@ def run_flower_simulation(config: dict) -> None:
     num_clients, rounds = int(fl_config["num_clients"]), int(experiment["rounds"])
     seed = int(experiment.get("seed", 42))
     torch.manual_seed(seed)
-
     trainset, testset = load_cifar10_data()
     client_datasets = partition_data(trainset, num_clients, fl_config.get("partitioning", "iid"), seed)
     testloader = DataLoader(testset, batch_size=64, shuffle=False)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     attacker, mtd = ByzantineAttacker(config, num_clients), MTDController(config)
     smpc = config.get("smpc", {})
-    use_smpc = bool(smpc.get("enabled", False))
+    use_sharing_simulation = bool(smpc.get("enabled", False))
     modulus = int(smpc.get("field_modulus", DEFAULT_FIELD_MODULUS))
     encoder = None
-    if use_smpc:
+    if use_sharing_simulation:
         from fl_security.smpc.fixed_point import FixedPointEncoder
         encoder = FixedPointEncoder(int(smpc.get("fixed_point_scale", 1_000_000)))
 
     global_model = CIFAR10CNN()
     initial_state = global_model.state_dict()
     state_keys = list(initial_state)
-    initial_arrays = [t.detach().cpu().numpy() for t in initial_state.values()]
+    initial_arrays = [tensor.detach().cpu().numpy() for tensor in initial_state.values()]
     initial_parameters = ndarrays_to_parameters(initial_arrays)
     logger = ExperimentLogger(output_dir=config.get("evaluation", {}).get("output_dir", "./results"))
 
@@ -76,6 +75,8 @@ def run_flower_simulation(config: dict) -> None:
                 device=device, label_transform=label_transform,
             )
             local_state = attacker.perturb_update(self.cid, round_num, state, local_state)
+            # This legacy Flower FitRes returns clear model arrays to the server.
+            # The later share arithmetic does NOT protect this communication hop.
             return (
                 [local_state[key].detach().cpu().numpy() for key in state_keys],
                 len(self.dataset),
@@ -86,7 +87,7 @@ def run_flower_simulation(config: dict) -> None:
             return 0.0, 0, {"client_id": int(self.cid)}
 
     class ResearchStrategy(Strategy):
-        """Flower strategy with MTD sampling and SMPC-backed weighted FedAvg."""
+        """Flower strategy with MTD sampling and committee-routed sharing arithmetic."""
         def __init__(self):
             self.last_round_config, self.last_selected, self.last_completed = {}, [], []
             self.last_malicious, self.last_aggregation_seconds, self.last_share_bytes = [], 0.0, 0
@@ -120,26 +121,28 @@ def run_flower_simulation(config: dict) -> None:
                 committees[len(states) - 1] = round_config["committees"][cid]
             self.last_malicious = [cid for cid in client_ids if attacker.is_malicious(cid, server_round)]
             self.last_share_bytes = 0
-            if use_smpc:
+            if use_sharing_simulation:
+                # Encoded shares are int64, even though Flower FitRes arrays are float32.
                 self.last_share_bytes = sum(
-                    sum(t.numel() * t.element_size() for t in state.values() if torch.is_floating_point(t))
-                    * len(round_config["committees"][cid])
+                    sum(t.numel() for t in state.values() if torch.is_floating_point(t))
+                    * 8 * len(round_config["committees"][cid])
                     for cid, state in zip(client_ids, states)
                 )
             started = time.perf_counter()
             aggregated = weighted_fedavg(
                 states, counts, global_model.state_dict(), encoder=encoder,
-                committees=committees if use_smpc else None, modulus=modulus,
+                committees=committees if use_sharing_simulation else None, modulus=modulus,
             )
             self.last_aggregation_seconds = time.perf_counter() - started
             global_model.load_state_dict(aggregated)
             return (
-                ndarrays_to_parameters([t.detach().cpu().numpy() for t in global_model.state_dict().values()]),
+                ndarrays_to_parameters([tensor.detach().cpu().numpy() for tensor in global_model.state_dict().values()]),
                 {
                     "selected_clients": int(len(client_ids)),
                     "malicious_clients": int(len(self.last_malicious)),
-                    "smpc_enabled": int(use_smpc),
-                    "smpc_share_bytes_estimate": int(self.last_share_bytes),
+                    "additive_sharing_simulation_enabled": int(use_sharing_simulation),
+                    "client_updates_delivered_in_clear_to_flower_server": 1,
+                    "share_payload_bytes_estimate": int(self.last_share_bytes),
                     "aggregation_seconds": float(self.last_aggregation_seconds),
                 },
             )
@@ -162,9 +165,10 @@ def run_flower_simulation(config: dict) -> None:
                 "selected_clients": int(len(self.last_selected)),
                 "completed_clients": int(len(self.last_completed)),
                 "malicious_selected": int(len(self.last_malicious)),
-                "smpc_enabled": int(use_smpc),
+                "additive_sharing_simulation_enabled": int(use_sharing_simulation),
+                "client_updates_delivered_in_clear_to_flower_server": 1,
                 "committee_count": int(len(self.last_round_config.get("committees", {}))),
-                "smpc_share_bytes_estimate": int(self.last_share_bytes),
+                "share_payload_bytes_estimate": int(self.last_share_bytes),
                 "aggregation_seconds": float(self.last_aggregation_seconds),
                 "client_failures_or_omissions": int(max(0, len(self.last_selected) - len(self.last_completed))),
             })
