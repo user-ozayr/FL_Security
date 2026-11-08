@@ -1,0 +1,30 @@
+# Virtual Environments
+venv/
+env/
+.venv/
+
+# Python Cache & Testing
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.tox/
+.coverage
+
+# Local Datasets
+data/
+
+# Experimental Results, CSVs, and Plots
+results/
+experiments/
+*.csv
+*.png
+*.jpg
+
+# OS and IDE Specific Files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
