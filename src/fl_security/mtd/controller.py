@@ -1,11 +1,10 @@
-"""Round-scoped MTD for client selection and balanced aggregation committees."""
+"""Round-scoped MTD with balanced committees and secret-keyed randomness."""
 import hashlib
 import hmac
 import os
 
-import numpy as np
-
 from fl_security.mtd.client_selection import select_clients
+from fl_security.mtd.randomness import HMACCounterRNG
 
 
 class MTDController:
@@ -16,19 +15,28 @@ class MTDController:
         self.committee_size = int(self.config.get("committee_size", 3))
         configured_seed = int(config.get("experiment", {}).get("seed", 42))
 
-        # Reproducible simulation is the default. For a live deployment, set
-        # FL_MTD_SECRET to a 32+ character secret kept outside client runtimes.
-        # The secret is never sent to Flower clients or returned in round config.
+        # The live schedule uses an HMAC-derived PRF key. Without this secret,
+        # schedules are reproducible simulation artifacts and are not secret.
         secret = os.environ.get("FL_MTD_SECRET", "")
+        material = f"fl-security-mtd-seed-v1:{configured_seed}".encode("utf-8")
         if secret:
-            if len(secret.encode("utf-8")) < 32:
+            secret_bytes = secret.encode("utf-8")
+            if len(secret_bytes) < 32:
                 raise ValueError("FL_MTD_SECRET must contain at least 32 bytes")
-            material = f"fl-security-mtd-seed:{configured_seed}".encode("utf-8")
-            digest = hmac.new(secret.encode("utf-8"), material, hashlib.sha256).digest()
-            self.seed = int.from_bytes(digest[:8], byteorder="big", signed=False)
+            self.seed = int.from_bytes(
+                hmac.new(secret_bytes, material, hashlib.sha256).digest()[:8],
+                byteorder="big",
+                signed=False,
+            )
+            self._random_key = hmac.new(
+                secret_bytes, b"fl-security-mtd-rng-v1:" + material, hashlib.sha256
+            ).digest()
             self.secret_seeded = True
         else:
             self.seed = configured_seed
+            self._random_key = hashlib.sha256(
+                b"fl-security-mtd-simulation-v1:" + material
+            ).digest()
             self.secret_seeded = False
 
         smpc = config.get("smpc", {})
@@ -44,12 +52,18 @@ class MTDController:
             raise ValueError("smpc.min_clients_per_round must be >= 2")
 
     def generate_round_config(self, round_num: int, num_clients: int, fraction: float) -> dict:
-        if round_num <= 0:
+        if isinstance(round_num, bool) or not isinstance(round_num, int) or round_num <= 0:
             raise ValueError("round_num must be positive")
         moving = self.enabled and self.config.get("change_every_round", True)
         round_seed = self.seed + round_num if moving else self.seed
+        round_material = f"round:{round_num}:seed:{round_seed}".encode("ascii")
+        round_key = hmac.new(self._random_key, round_material, hashlib.sha256).digest()
+        rng = HMACCounterRNG(round_key)
+
         strategy = self.selection_strategy if self.enabled else "fixed"
-        selected = select_clients(num_clients, fraction, strategy=strategy, seed=round_seed)
+        selected = select_clients(
+            num_clients, fraction, strategy=strategy, seed=round_seed, rng=rng
+        )
 
         committee_size = min(self.committee_size, self.num_aggregation_parties)
         if self.smpc_enabled:
@@ -66,9 +80,9 @@ class MTDController:
 
         # Balanced cyclic assignment: no committee repeats a party, party loads
         # differ by at most one, and every party gets >=2 shares when feasible.
-        rng = np.random.default_rng(round_seed + 10_000)
-        party_order = rng.permutation(self.num_aggregation_parties).tolist()
-        offset = int(rng.integers(0, self.num_aggregation_parties))
+        party_order = list(range(self.num_aggregation_parties))
+        rng.shuffle(party_order)
+        offset = rng.randbelow(self.num_aggregation_parties)
         cycle = party_order[offset:] + party_order[:offset]
         slots = [
             cycle[index % self.num_aggregation_parties]
