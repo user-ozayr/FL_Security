@@ -14,6 +14,7 @@ from fl_security.federated.flower_simulation import _resolve_authenticated_clien
 from fl_security.mtd.controller import MTDController
 from fl_security.mtd.randomness import HMACCounterRNG
 from fl_security.smpc import additive_sharing
+from fl_security.config import validate_config
 
 
 def test_hmac_counter_rng_is_reproducible_and_samples_without_replacement():
@@ -149,3 +150,8 @@ def test_experiment_logger_rejects_traversal_plot_filename(tmp_path: Path):
     logger.log_round({"round": 1, "global_accuracy": 0.5})
     with pytest.raises(ValueError, match="single"):
         logger.plot_metrics("../outside.png")
+
+
+def test_configuration_validation_uses_exceptions_for_invalid_input():
+    with pytest.raises(ValueError, match="root"):
+        validate_config(None)
