@@ -1,5 +1,5 @@
 experiment:
-  name: robust_sign_flip
+  name: fedavg_no_attack
   seed: 42
   rounds: 3
 
