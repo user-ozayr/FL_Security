@@ -88,8 +88,8 @@ class AggregatorState:
         if not hmac.compare_digest(signature, _signature(self.control_token, message)):
             raise PermissionError("invalid coordinator signature")
         clients = tuple(json.loads(canonical))
-        if not clients:
-            raise ValueError("cannot finalize an empty participant set")
+        if len(clients) < 2:
+            raise ValueError("each party aggregate must include at least two clients")
         with self.lock:
             if round_id in self.finalized:
                 previous, body, keys_json = self.finalized[round_id]
