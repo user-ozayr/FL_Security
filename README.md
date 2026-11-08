@@ -10,7 +10,8 @@ Use Python 3.11 and install the Flower simulation extra:
 
     python -m pip install -e ".[simulation,dev]"
     pytest -q
-    python run_experiment.py --config configs/hybrid.yaml --local-aggregators
+    env OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 python run_experiment.py --config configs/benchmark_lr001/baseline.yaml
+    env OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 python run_experiment.py --config configs/benchmark_lr001/hybrid_verified.yaml --local-aggregators
 
 The local command starts one separate aggregation-party process per
 smpc.num_aggregation_parties, runs the Flower simulation, then shuts the
@@ -20,6 +21,20 @@ metrics are written to ./results.
 The experiment server is pinned to the legacy Flower 1.38.x simulation API
 (start_simulation plus a custom Strategy). It is not yet migrated to the
 ClientApp/ServerApp project model.
+
+## Training stability and reproduction
+
+With seed 42, five CIFAR-10 clients, one local epoch, and batch size 32, the
+historical learning rate of 0.1 caused client 1 to produce non-finite local
+weights. Flower reported two results and one client failure; Ray had dispatched
+the clients successfully. The same one-round setup at 0.01 completed all three
+selected clients. The `client_fn(cid)` deprecation warning is separate from
+this numerical failure.
+
+The original experiment configs remain unchanged. Use the configs under
+`configs/benchmark_lr001/` for the stabilized benchmark. The clean baseline is
+`configs/benchmark_lr001/baseline.yaml`; the hybrid run is
+`configs/benchmark_lr001/hybrid_verified.yaml`.
 
 The local party processes share one host and kernel with the coordinator and
 clients. The local helper places the per-client token map in the shared
