@@ -18,8 +18,12 @@ party processes down. CIFAR-10 is downloaded by torchvision into ./data;
 metrics are written to ./results.
 
 The local party processes share one host and kernel with the coordinator and
-clients. This demonstrates the complete client-to-party-to-coordinator data
-flow, but it is not a multi-host trust-boundary deployment.
+clients. The local helper places the per-client token map in the shared
+simulation worker environment so credentials can be routed by client ID; this
+is a wiring/demo convenience, not credential isolation. A compromised local
+worker or coordinator can inspect that map. This demonstrates the complete
+message flow only, not protection against a malicious local host, coordinator,
+or simulated client. It is not a multi-host trust-boundary deployment.
 
 ## External aggregation-party deployment
 
