@@ -237,7 +237,15 @@ def run_flower_simulation(config: dict) -> None:
                 return None, {}
             committees = self.last_round_config["committees"]
             client_ids = [int(proxy.cid) for proxy, _ in results]
-            counts = [int(fit_res.num_examples) for _, fit_res in results]
+            if len(set(client_ids)) != len(client_ids):
+                raise RuntimeError("Flower returned duplicate client results for a round")
+            reported_counts = [int(fit_res.num_examples) for _, fit_res in results]
+            counts = [len(client_datasets[cid]) for cid in client_ids]
+            count_mismatches = [
+                (cid, reported, expected)
+                for cid, reported, expected in zip(client_ids, reported_counts, counts)
+                if reported != expected
+            ]
             self.last_completed = client_ids
             self.last_malicious = [
                 cid for cid in client_ids if attacker.is_malicious(cid, server_round)
@@ -249,6 +257,11 @@ def run_flower_simulation(config: dict) -> None:
 
             if use_smpc:
                 try:
+                    if count_mismatches:
+                        raise RuntimeError(
+                            "Client-reported example counts do not match server-side partitions: "
+                            f"{count_mismatches}"
+                        )
                     if len(client_ids) < min_clients:
                         raise RuntimeError(
                             f"Only {len(client_ids)} clients completed; SMPC requires {min_clients}. "
@@ -293,6 +306,11 @@ def run_flower_simulation(config: dict) -> None:
                     # Also removes partial uploads from failed clients and cached party sums.
                     self._clear_round_parties()
             else:
+                if count_mismatches:
+                    raise RuntimeError(
+                        "Client-reported example counts do not match server-side partitions: "
+                        f"{count_mismatches}"
+                    )
                 client_states = []
                 for _, fit_res in results:
                     arrays = parameters_to_ndarrays(fit_res.parameters)
