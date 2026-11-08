@@ -1,0 +1,43 @@
+experiment:
+  name: robust_no_attack
+  seed: 42
+  rounds: 3
+
+federated_learning:
+  framework: flower
+  dataset: cifar10
+  num_clients: 5
+  fraction_train: 1.0
+  local_epochs: 1
+  batch_size: 32
+  learning_rate: 0.01
+  partitioning: iid
+
+mtd:
+  enabled: false
+
+smpc:
+  enabled: false
+
+attacks:
+  enabled: false
+  attack_type: sign_flip
+  compromised_fraction: 0.4
+  strength: 1.0
+
+defences:
+  robust_aggregation:
+    enabled: true
+    max_malicious: 2
+    residual_z_threshold: 3.5
+    min_cosine_similarity: 0.0
+    max_norm_ratio: 5.0
+    min_survivors: 3
+    history_decay: 0.8
+    min_history_rounds: 2
+    history_cosine_threshold: -0.25
+
+evaluation:
+  save_csv: true
+  save_plots: true
+  seeds: 1

@@ -24,12 +24,15 @@ smpc:
   enabled: true
   scheme: additive_sharing
   fixed_point_scale: 1000000
-  dropout_recovery: true
-  threshold: 2
-  num_aggregation_parties: 3
+  field_modulus: 2305843009213693951
+  num_aggregation_parties: 4
+  min_clients_per_round: 3
 
 attacks:
   enabled: false
+  attack_type: sign_flip
+  compromised_fraction: 0.4
+  strength: 1.0
 
 evaluation:
   save_csv: true

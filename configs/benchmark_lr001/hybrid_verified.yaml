@@ -1,0 +1,41 @@
+experiment:
+  name: hybrid_mtd_smpc_attack_lr001_verified
+  seed: 42
+  rounds: 3
+
+federated_learning:
+  framework: flower
+  dataset: cifar10
+  num_clients: 5
+  fraction_train: 0.6
+  local_epochs: 1
+  batch_size: 32
+  learning_rate: 0.01
+  partitioning: iid
+
+mtd:
+  enabled: true
+  selection_strategy: random
+  committee_assignment: randomized
+  committee_size: 3
+  change_every_round: true
+
+smpc:
+  enabled: true
+  scheme: additive_sharing
+  fixed_point_scale: 1000000
+  field_modulus: 2305843009213693951
+  num_aggregation_parties: 4
+  min_clients_per_round: 3
+
+attacks:
+  enabled: true
+  attack_type: sign_flip
+  compromised_fraction: 0.4
+  strength: 1.0
+
+evaluation:
+  save_csv: true
+  save_plots: true
+  seeds: 1
+  output_dir: results/flower_fix_hybrid_lr001

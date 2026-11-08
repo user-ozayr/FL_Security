@@ -1,0 +1,31 @@
+experiment:
+  name: baseline_sign_flip
+  seed: 42
+  rounds: 3
+
+federated_learning:
+  framework: flower
+  dataset: cifar10
+  num_clients: 5
+  fraction_train: 1.0
+  local_epochs: 1
+  batch_size: 32
+  learning_rate: 0.01
+  partitioning: iid
+
+mtd:
+  enabled: false
+
+smpc:
+  enabled: false
+
+attacks:
+  enabled: true
+  attack_type: sign_flip
+  compromised_fraction: 0.4
+  strength: 1.0
+
+evaluation:
+  save_csv: true
+  save_plots: true
+  seeds: 1

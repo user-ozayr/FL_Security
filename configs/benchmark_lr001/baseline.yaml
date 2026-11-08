@@ -1,0 +1,29 @@
+experiment:
+  name: baseline_fedavg_lr001
+  seed: 42
+  rounds: 3
+
+federated_learning:
+  framework: flower
+  dataset: cifar10
+  num_clients: 5
+  fraction_train: 0.6
+  local_epochs: 1
+  batch_size: 32
+  learning_rate: 0.01
+  partitioning: iid
+
+mtd:
+  enabled: false
+
+smpc:
+  enabled: false
+
+attacks:
+  enabled: false
+
+evaluation:
+  save_csv: true
+  save_plots: true
+  seeds: 1
+  output_dir: results/flower_fix_baseline_lr001

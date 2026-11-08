@@ -1,10 +1,12 @@
-#!/bin/bash
-set -e
-echo "Starting full benchmark suite execution..."
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "Starting FL security benchmark suite..."
 for cfg in configs/*.yaml; do
     echo "========================================="
-    echo "Running experiment with config: $cfg"
+    echo "Running experiment: $cfg"
     echo "========================================="
-    python run_experiment.py --config "$cfg"
+    # SMPC configurations start and stop local party processes automatically.
+    python run_experiment.py --config "$cfg" --local-aggregators
 done
-echo "All experiments completed successfully!"
+echo "Benchmark suite completed."
