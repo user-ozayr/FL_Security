@@ -116,46 +116,87 @@ def run_flower_simulation(config: dict) -> None:
     experiment_prefix = f"{slug}-{seed}"
 
     class ResearchNumPyClient(NumPyClient):
-        def __init__(self, cid: int):
-            self.cid, self.dataset = cid, client_datasets[cid]
+        """Client whose experiment identity is supplied by the server."""
+
+        def __init__(self, flower_cid: str):
+            self.flower_cid = str(flower_cid)
 
         def get_parameters(self, client_config):
             return [array.copy() for array in initial_arrays]
 
         def fit(self, parameters, fit_config):
+            client_id = int(fit_config["client_id"])
+            dataset = client_datasets[client_id]
             round_num = int(fit_config["server_round"])
-            state = {key: torch.from_numpy(array.copy()) for key, array in zip(state_keys, parameters)}
+
+            state = {
+                key: torch.from_numpy(array.copy())
+                for key, array in zip(state_keys, parameters)
+            }
             model = CIFAR10CNN()
             model.load_state_dict(state)
-            torch.manual_seed(seed + round_num * 100_000 + self.cid)
+            torch.manual_seed(seed + round_num * 100_000 + client_id)
+
             loader = DataLoader(
-                self.dataset,
+                dataset,
                 batch_size=int(fl_config.get("batch_size", 32)),
                 shuffle=True,
             )
+
             label_transform = None
-            if attacker.is_malicious(self.cid, round_num) and attacker.attack_type == "label_flip":
+            if attacker.is_malicious(client_id, round_num) and attacker.attack_type == "label_flip":
                 def label_transform(labels):
-                    values = attacker.perturb_labels(self.cid, round_num, labels, num_classes=10)
-                    return torch.as_tensor(values, dtype=torch.long, device=labels.device)
+                    values = attacker.perturb_labels(
+                        client_id, round_num, labels, num_classes=10
+                    )
+                    return torch.as_tensor(
+                        values, dtype=torch.long, device=labels.device
+                    )
 
             local_state = train_local(
-                model, loader,
+                model,
+                loader,
                 epochs=int(fl_config.get("local_epochs", 1)),
                 lr=float(fl_config.get("learning_rate", 0.01)),
                 device=device,
                 label_transform=label_transform,
             )
-            local_state = attacker.perturb_update(self.cid, round_num, state, local_state)
+
+            bad_training = [
+                key for key, value in local_state.items()
+                if torch.is_floating_point(value)
+                and not torch.isfinite(value).all()
+            ]
+
+            if bad_training:
+                raise RuntimeError(
+                    f"Client {client_id}: non-finite values produced "
+                    f"during local training in tensors: {bad_training}")
+            local_state = attacker.perturb_update(
+                client_id, round_num, state, local_state
+            )
+
+            bad_attack = [
+                key for key, value in local_state.items()
+                if torch.is_floating_point(value)
+                and not torch.isfinite(value).all()
+            ]
+
+            if bad_attack:
+                raise RuntimeError(
+                    f"Client {client_id}: non-finite values produced "
+                    f"after applying {attacker.attack_type}: {bad_attack}"
+                )
 
             if bool(fit_config.get("smpc_enabled", False)):
                 committee = json.loads(fit_config["committee_ids_json"])
                 endpoints = json.loads(fit_config["aggregator_endpoints_json"])
-                tokens = _load_client_tokens(self.cid)
+                tokens = _load_client_tokens(client_id)
+
                 payload_bytes = upload_client_update(
                     local_state,
-                    num_examples=len(self.dataset),
-                    client_id=self.cid,
+                    num_examples=len(dataset),
+                    client_id=client_id,
                     round_id=str(fit_config["round_id"]),
                     committee_ids=committee,
                     aggregator_endpoints=endpoints,
@@ -163,26 +204,30 @@ def run_flower_simulation(config: dict) -> None:
                     encoder=encoder,
                     modulus=int(fit_config["field_modulus"]),
                 )
-                # The coordinator receives no model arrays in secure mode.
-                return [], len(self.dataset), {
-                    "client_id": int(self.cid),
+
+                return [], len(dataset), {
+                    "client_id": client_id,
                     "shares_uploaded": 1,
                     "share_payload_bytes": int(payload_bytes),
                 }
 
             return (
-                [local_state[key].detach().cpu().numpy() for key in state_keys],
-                len(self.dataset),
-                {"client_id": int(self.cid)},
+                [
+                    local_state[key].detach().cpu().numpy()
+                    for key in state_keys
+                ],
+                len(dataset),
+                {"client_id": client_id},
             )
 
         def evaluate(self, parameters, client_config):
-            return 0.0, 0, {"client_id": int(self.cid)}
+            return 0.0, 0, {"flower_client_id": self.flower_cid}
 
     class ResearchStrategy(Strategy):
         """Flower strategy using MTD and committee-routed secret sharing."""
         def __init__(self):
             self.last_round_config = {}
+            self.proxy_id_by_client = None
             self.last_selected, self.last_completed, self.last_malicious = [], [], []
             self.last_aggregation_seconds, self.last_share_bytes = 0.0, 0
             self.last_cleanup_failures, self.last_round_id = 0, ""
@@ -229,33 +274,76 @@ def run_flower_simulation(config: dict) -> None:
 
         def configure_fit(self, server_round, parameters, client_manager):
             available = client_manager.all()
+
+            # Flower generates opaque proxy IDs. Assign stable logical IDs
+            # 0..num_clients-1 to the sorted proxy IDs once per simulation.
+            if self.proxy_id_by_client is None:
+                proxy_ids = sorted(available.keys())
+                if len(proxy_ids) != num_clients:
+                    raise RuntimeError(
+                        f"Expected {num_clients} registered Flower clients, "
+                        f"but found {len(proxy_ids)}: {proxy_ids}"
+                    )
+                self.proxy_id_by_client = {
+                    logical_id: proxy_id
+                    for logical_id, proxy_id in enumerate(proxy_ids)
+                }
+                print(
+                    "[DEBUG] Flower proxy mapping (logical ID -> Flower ID): "
+                    f"{self.proxy_id_by_client}",
+                    flush=True,
+                )
+
             self.last_round_config = mtd.generate_round_config(
-                server_round, num_clients, float(fl_config.get("fraction_train", 1.0))
+                server_round,
+                num_clients,
+                float(fl_config.get("fraction_train", 1.0)),
             )
-            self.last_selected = list(self.last_round_config["selected_clients"])
-            # Unique unpredictable round identifier prevents replay across reruns.
-            self.last_round_id = f"{experiment_prefix}-r{server_round}-{uuid.uuid4().hex}"
+            self.last_selected = list(
+                self.last_round_config["selected_clients"]
+            )
+            self.last_round_id = (
+                f"{experiment_prefix}-r{server_round}-{uuid.uuid4().hex}"
+            )
+
+            print(
+                f"[DEBUG] MTD selected logical clients: {self.last_selected}",
+                flush=True,
+            )
+
             instructions = []
             for cid in self.last_selected:
-                proxy = available.get(str(cid))
+                proxy_id = self.proxy_id_by_client.get(int(cid))
+                proxy = available.get(proxy_id) if proxy_id is not None else None
                 if proxy is None:
+                    print(
+                        f"[WARNING] Logical client {cid} is not currently available",
+                        flush=True,
+                    )
                     continue
+
                 client_config = {
                     "server_round": int(server_round),
                     "client_id": int(cid),
                     "smpc_enabled": bool(use_smpc),
                 }
+
                 if use_smpc:
                     committee = self.last_round_config["committees"][cid]
                     client_config.update({
                         "round_id": self.last_round_id,
-                        "committee_ids_json": json.dumps(committee, separators=(",", ":")),
+                        "committee_ids_json": json.dumps(
+                            committee, separators=(",", ":")
+                        ),
                         "aggregator_endpoints_json": json.dumps({
-                            str(pid): party_config[str(pid)]["url"] for pid in committee
+                            str(pid): party_config[str(pid)]["url"]
+                            for pid in committee
                         }, separators=(",", ":")),
                         "field_modulus": int(modulus),
                     })
+
                 instructions.append((proxy, FitIns(parameters, client_config)))
+
             return instructions
 
         def aggregate_fit(self, server_round, results, failures):
@@ -264,7 +352,13 @@ def run_flower_simulation(config: dict) -> None:
                 self._clear_round_parties()
                 return None, {}
             committees = self.last_round_config["committees"]
-            client_ids = [int(proxy.cid) for proxy, _ in results]
+            client_ids = []
+            for _, fit_res in results:
+                if "client_id" not in fit_res.metrics:
+                    raise RuntimeError(
+                        "Flower FitRes is missing the logical client_id metric"
+                    )
+                client_ids.append(int(fit_res.metrics["client_id"]))
             if len(set(client_ids)) != len(client_ids):
                 raise RuntimeError("Flower returned duplicate client results for a round")
             reported_counts = [int(fit_res.num_examples) for _, fit_res in results]
@@ -383,9 +477,13 @@ def run_flower_simulation(config: dict) -> None:
                     "smpc_enabled": int(use_smpc),
                     "share_payload_bytes": int(self.last_share_bytes),
                     "aggregation_seconds": float(self.last_aggregation_seconds),
-                    "aggregators_used": int(len({
-                        int(pid) for cid in client_ids for pid in committees[cid]
-                    })),
+                    "aggregators_used": (
+                        int(len({
+                            int(pid) for cid in client_ids
+                            for pid in committees[cid]
+                        }))
+                        if use_smpc else 0
+                    ),
                     "aggregator_cleanup_failures": int(self.last_cleanup_failures),
                 },
             )
@@ -411,12 +509,18 @@ def run_flower_simulation(config: dict) -> None:
                 "completed_clients": int(len(self.last_completed)),
                 "malicious_selected": int(len(self.last_malicious)),
                 "smpc_enabled": int(use_smpc),
-                "committees_used": int(len(self.last_round_config.get("committees", {}))),
+                "committees_used": (
+                    int(len(self.last_round_config.get("committees", {})))
+                    if use_smpc else 0
+                ),
                 "mtd_secret_seeded": int(self.last_round_config.get("secret_seeded", False)),
-                "aggregators_used": int(len({
-                    int(pid) for cid in self.last_completed
-                    for pid in self.last_round_config.get("committees", {}).get(cid, [])
-                })),
+                "aggregators_used": (
+                    int(len({
+                        int(pid) for cid in self.last_completed
+                        for pid in self.last_round_config.get("committees", {}).get(cid, [])
+                    }))
+                    if use_smpc else 0
+                ),
                 "share_payload_bytes": int(self.last_share_bytes),
                 "aggregation_seconds": float(self.last_aggregation_seconds),
                 "aggregator_cleanup_failures": int(self.last_cleanup_failures),
@@ -478,7 +582,7 @@ def run_flower_simulation(config: dict) -> None:
             return None
 
     def client_fn(cid: str):
-        return ResearchNumPyClient(int(cid)).to_client()
+        return ResearchNumPyClient(cid).to_client()
 
     # These are coordinator-only secrets. The strategy has already loaded
     # the values it needs, so remove them before Ray starts worker processes.
